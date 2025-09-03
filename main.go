@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/compliance-framework/agent/runner"
 	"github.com/compliance-framework/agent/runner/proto"
@@ -38,9 +41,14 @@ func (c *PluginConfig) Validate() error {
 	return nil
 }
 
+type SaturatedRepository struct {
+	Settings *github.Repository `json:"settings"`
+}
+
 type GithubReposPlugin struct {
 	Logger hclog.Logger
 
+	config       *PluginConfig
 	githubClient *github.Client
 }
 
@@ -58,15 +66,99 @@ func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.Confi
 		return nil, err
 	}
 
+	l.config = config
 	l.githubClient = github.NewClient(nil).WithAuthToken(config.Token)
 
 	return &proto.ConfigureResponse{}, nil
 }
 
 func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHelper) (*proto.EvalResponse, error) {
+	ctx := context.TODO()
+	repochan, errchan := l.FetchRepositories(ctx, req)
+	done := false
+
+	for !done {
+		select {
+		case err, ok := <-errchan:
+			if !ok {
+				done = true
+				continue
+			}
+			l.Logger.Error("Error fetching repositories", "error", err)
+			return &proto.EvalResponse{
+				Status: proto.ExecutionStatus_FAILURE,
+			}, err
+		case repo, ok := <-repochan:
+			if !ok {
+				done = true
+				continue
+			}
+			l.Logger.Debug("Processing repository:", "repo_name", repo.GetName())
+		}
+	}
+
 	return &proto.EvalResponse{
 		Status: proto.ExecutionStatus_SUCCESS,
 	}, nil
+}
+
+func (l *GithubReposPlugin) FetchRepositories(ctx context.Context, req *proto.EvalRequest) (chan *github.Repository, chan error) {
+	repochan := make(chan *github.Repository)
+	errchan := make(chan error)
+
+	var includedRepositories, excludedRepositories []string
+
+	if l.config.IncludedRepositories != "" {
+		includedRepositories = strings.Split(l.config.IncludedRepositories, ",")
+	}
+
+	if l.config.ExcludedRepositories != "" {
+		excludedRepositories = strings.Split(l.config.ExcludedRepositories, ",")
+	}
+
+	go func() {
+		defer close(repochan)
+		defer close(errchan)
+		done := false
+		paginationOpts := &github.ListOptions{
+			PerPage: 100,
+			Page:    1,
+		}
+
+		for !done {
+			repos, resp, err := l.githubClient.Repositories.ListByOrg(ctx, l.config.Organization, &github.RepositoryListByOrgOptions{
+				ListOptions: *paginationOpts,
+			})
+
+			if err != nil {
+				errchan <- err
+				done = true
+				return
+			}
+
+			for _, repo := range repos {
+				if len(includedRepositories) > 0 && !slices.Contains(includedRepositories, repo.GetName()) {
+					l.Logger.Trace("Skipping repository (not included)", "repos", repo.GetName())
+					continue
+				}
+
+				if len(excludedRepositories) > 0 && slices.Contains(excludedRepositories, repo.GetName()) {
+					l.Logger.Trace("Skipping repository (excluded):", "repos", repo.GetName())
+					continue
+				}
+
+				repochan <- repo
+			}
+
+			if resp.NextPage == 0 {
+				done = true
+			} else {
+				paginationOpts.Page = resp.NextPage
+			}
+		}
+	}()
+
+	return repochan, errchan
 }
 
 func main() {
