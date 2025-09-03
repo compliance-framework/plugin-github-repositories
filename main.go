@@ -170,6 +170,11 @@ func (l *GithubReposPlugin) FetchRepositories(ctx context.Context, req *proto.Ev
 					continue
 				}
 
+				if repo.GetArchived() {
+					l.Logger.Trace("Skipping repository (archived):", "repos", repo.GetName())
+					continue
+				}
+
 				repochan <- repo
 			}
 
@@ -191,6 +196,16 @@ func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *Saturate
 	evidences := make([]*proto.Evidence, 0)
 	activities = append(activities, &proto.Activity{
 		Title: "Collect Github Repository Data",
+		Steps: []*proto.Step{
+			{
+				Title:       "Authenticate with GitHub",
+				Description: "Authenticate with the GitHub API via the github-go client.",
+			},
+			{
+				Title:       "Fetch Repository Details",
+				Description: "Retrieve detailed information about the GitHub repository.",
+			},
+		},
 	})
 
 	actors := []*proto.OriginActor{
