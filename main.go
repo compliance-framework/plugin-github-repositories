@@ -44,7 +44,9 @@ func (c *PluginConfig) Validate() error {
 }
 
 type SaturatedRepository struct {
-	Settings *github.Repository `json:"settings"`
+	Settings     *github.Repository    `json:"settings"`
+	Workflows    []*github.Workflow    `json:"workflows"`
+	WorkflowRuns []*github.WorkflowRun `json:"workflow_runs"`
 }
 
 type GithubReposPlugin struct {
@@ -97,9 +99,33 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 			}
 			l.Logger.Debug("Processing repository:", "repo_name", repo.GetName())
 
-			data := &SaturatedRepository{
-				Settings: repo,
+			workflows, err := l.GatherConfiguredWorkflows(ctx, repo)
+			if err != nil {
+				l.Logger.Error("Error gathering workflows", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
 			}
+
+			workflowRuns, err := l.GatherWorkflowRuns(ctx, repo)
+			if err != nil {
+				l.Logger.Error("Error gathering workflow runs", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
+
+			data := &SaturatedRepository{
+				Settings:     repo,
+				Workflows:    workflows,
+				WorkflowRuns: workflowRuns,
+			}
+
+			// Uncomment to check the data that is being passed through from
+			// the client, as data formats are often slightly different than
+			// the raw API endpoints
+			// jsonData, _ := json.MarshalIndent(data, "", "  ")
+			// l.Logger.Debug(string(jsonData))
 
 			evidences, err := l.EvaluatePolicies(ctx, data, req)
 			if err != nil {
@@ -187,6 +213,27 @@ func (l *GithubReposPlugin) FetchRepositories(ctx context.Context, req *proto.Ev
 	}()
 
 	return repochan, errchan
+}
+
+func (l *GithubReposPlugin) GatherConfiguredWorkflows(ctx context.Context, repo *github.Repository) ([]*github.Workflow, error) {
+	workflows, _, err := l.githubClient.Actions.ListWorkflows(ctx, repo.GetOwner().GetLogin(), repo.GetName(), nil)
+	if err != nil {
+		return nil, err
+	}
+	return workflows.Workflows, nil
+}
+
+func (l *GithubReposPlugin) GatherWorkflowRuns(ctx context.Context, repo *github.Repository) ([]*github.WorkflowRun, error) {
+	opts := &github.ListOptions{
+		PerPage: 100,
+	}
+	workflowRuns, _, err := l.githubClient.Actions.ListRepositoryWorkflowRuns(ctx, repo.GetOwner().GetLogin(), repo.GetName(), &github.ListWorkflowRunsOptions{
+		ListOptions: *opts,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return workflowRuns.WorkflowRuns, nil
 }
 
 func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *SaturatedRepository, req *proto.EvalRequest) ([]*proto.Evidence, error) {
