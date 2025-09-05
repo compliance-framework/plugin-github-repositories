@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 
@@ -51,6 +53,7 @@ type SaturatedRepository struct {
 	ProtectedBranches []string `json:"protected_branches"`
 	// RequiredStatusChecks maps branch name -> required status checks configuration
 	RequiredStatusChecks map[string]*github.RequiredStatusChecks `json:"required_status_checks"`
+	SBOM                 *github.SBOM                            `json:"sbom"`
 }
 
 type GithubReposPlugin struct {
@@ -153,19 +156,28 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				}
 			}
 
+			sbom, err := l.GatherSBOM(ctx, repo)
+			if err != nil {
+				l.Logger.Error("Error gathering SBOM", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
+
 			data := &SaturatedRepository{
 				Settings:             repo,
 				Workflows:            workflows,
 				WorkflowRuns:         workflowRuns,
 				ProtectedBranches:    branchNames,
 				RequiredStatusChecks: requiredChecks,
+				SBOM:                 sbom,
 			}
 
 			// Uncomment to check the data that is being passed through from
 			// the client, as data formats are often slightly different than
 			// the raw API endpoints
-			// jsonData, _ := json.MarshalIndent(data, "", "  ")
-			// _ = os.WriteFile(fmt.Sprintf("./dist/%s.json", repo.GetName()), jsonData, 0644)
+			jsonData, _ := json.MarshalIndent(data, "", "  ")
+			_ = os.WriteFile(fmt.Sprintf("./dist/%s.json", repo.GetName()), jsonData, 0644)
 
 			evidences, err := l.EvaluatePolicies(ctx, data, req)
 			if err != nil {
@@ -310,6 +322,14 @@ func (l *GithubReposPlugin) GetRequiredStatusChecks(ctx context.Context, repo *g
 		return protection.RequiredStatusChecks, nil
 	}
 	return nil, nil
+}
+
+func (l *GithubReposPlugin) GatherSBOM(ctx context.Context, repo *github.Repository) (*github.SBOM, error) {
+	sbom, _, err := l.githubClient.DependencyGraph.GetSBOM(ctx, repo.GetOwner().GetLogin(), repo.GetName())
+	if err != nil {
+		return nil, err
+	}
+	return sbom, nil
 }
 
 func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *SaturatedRepository, req *proto.EvalRequest) ([]*proto.Evidence, error) {
