@@ -47,6 +47,10 @@ type SaturatedRepository struct {
 	Settings     *github.Repository    `json:"settings"`
 	Workflows    []*github.Workflow    `json:"workflows"`
 	WorkflowRuns []*github.WorkflowRun `json:"workflow_runs"`
+	// ProtectedBranches is the list of protected branches in the repository
+	ProtectedBranches []string `json:"protected_branches"`
+	// RequiredStatusChecks maps branch name -> required status checks configuration
+	RequiredStatusChecks map[string]*github.RequiredStatusChecks `json:"required_status_checks"`
 }
 
 type GithubReposPlugin struct {
@@ -115,17 +119,53 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				}, err
 			}
 
+			// Fetch protected branches and required status checks
+			branches, err := l.ListProtectedBranches(ctx, repo)
+			if err != nil {
+				l.Logger.Error("Error listing protected branches", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
+			branchNames := make([]string, 0, len(branches))
+			requiredChecks := make(map[string]*github.RequiredStatusChecks)
+			for _, b := range branches {
+				if b == nil || b.Name == nil {
+					continue
+				}
+				name := b.GetName()
+				branchNames = append(branchNames, name)
+				checks, err := l.GetRequiredStatusChecks(ctx, repo, name)
+				if err != nil {
+					l.Logger.Trace("Branch required checks fetch failed", "repo", repo.GetFullName(), "branch", name, "error", err)
+					continue
+				}
+				if checks != nil {
+					requiredChecks[name] = checks
+				}
+			}
+			// Fallback to default branch if none collected
+			if len(requiredChecks) == 0 {
+				if def := repo.GetDefaultBranch(); def != "" {
+					if checks, err := l.GetRequiredStatusChecks(ctx, repo, def); err == nil && checks != nil {
+						requiredChecks[def] = checks
+					}
+				}
+			}
+
 			data := &SaturatedRepository{
-				Settings:     repo,
-				Workflows:    workflows,
-				WorkflowRuns: workflowRuns,
+				Settings:             repo,
+				Workflows:            workflows,
+				WorkflowRuns:         workflowRuns,
+				ProtectedBranches:    branchNames,
+				RequiredStatusChecks: requiredChecks,
 			}
 
 			// Uncomment to check the data that is being passed through from
 			// the client, as data formats are often slightly different than
 			// the raw API endpoints
 			// jsonData, _ := json.MarshalIndent(data, "", "  ")
-			// l.Logger.Debug(string(jsonData))
+			// _ = os.WriteFile(fmt.Sprintf("./dist/%s.json", repo.GetName()), jsonData, 0644)
 
 			evidences, err := l.EvaluatePolicies(ctx, data, req)
 			if err != nil {
@@ -234,6 +274,42 @@ func (l *GithubReposPlugin) GatherWorkflowRuns(ctx context.Context, repo *github
 		return nil, err
 	}
 	return workflowRuns.WorkflowRuns, nil
+}
+
+func (l *GithubReposPlugin) ListProtectedBranches(ctx context.Context, repo *github.Repository) ([]*github.Branch, error) {
+	owner := repo.GetOwner().GetLogin()
+	name := repo.GetName()
+
+	opts := &github.BranchListOptions{
+		Protected:   github.Ptr(true),
+		ListOptions: github.ListOptions{PerPage: 100, Page: 1},
+	}
+	var out []*github.Branch
+	for {
+		branches, resp, err := l.githubClient.Repositories.ListBranches(ctx, owner, name, opts)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, branches...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.ListOptions.Page = resp.NextPage
+	}
+	return out, nil
+}
+
+func (l *GithubReposPlugin) GetRequiredStatusChecks(ctx context.Context, repo *github.Repository, branch string) (*github.RequiredStatusChecks, error) {
+	owner := repo.GetOwner().GetLogin()
+	name := repo.GetName()
+	protection, _, err := l.githubClient.Repositories.GetBranchProtection(ctx, owner, name, branch)
+	if err != nil {
+		return nil, err
+	}
+	if protection != nil && protection.RequiredStatusChecks != nil {
+		return protection.RequiredStatusChecks, nil
+	}
+	return nil, nil
 }
 
 func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *SaturatedRepository, req *proto.EvalRequest) ([]*proto.Evidence, error) {
