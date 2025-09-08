@@ -137,8 +137,10 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 					continue
 				}
 				name := b.GetName()
+				l.Logger.Debug("Found protected branch", "branch", name)
 				branchNames = append(branchNames, name)
 				checks, err := l.GetRequiredStatusChecks(ctx, repo, name)
+				l.Logger.Debug("Fetched required status checks", "branch", name, "checks", checks)
 				if err != nil {
 					l.Logger.Trace("Branch required checks fetch failed", "repo", repo.GetFullName(), "branch", name, "error", err)
 					continue
@@ -149,6 +151,7 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 			}
 			// Fallback to default branch if none collected
 			if len(requiredChecks) == 0 {
+				l.Logger.Debug("No protected branches with required status checks found, checking default branch", "repo", repo.GetFullName())
 				if def := repo.GetDefaultBranch(); def != "" {
 					if checks, err := l.GetRequiredStatusChecks(ctx, repo, def); err == nil && checks != nil {
 						requiredChecks[def] = checks
@@ -314,14 +317,97 @@ func (l *GithubReposPlugin) ListProtectedBranches(ctx context.Context, repo *git
 func (l *GithubReposPlugin) GetRequiredStatusChecks(ctx context.Context, repo *github.Repository, branch string) (*github.RequiredStatusChecks, error) {
 	owner := repo.GetOwner().GetLogin()
 	name := repo.GetName()
+
+	// Accumulators for effective required status checks across branch protection and rulesets.
+	strict := false
+	type checkKey struct {
+		context  string
+		hasAppID bool
+		appID    int64
+	}
+	checksSet := make(map[checkKey]struct{})
+
+	// 1) Legacy branch protection settings (if present).
 	protection, _, err := l.githubClient.Repositories.GetBranchProtection(ctx, owner, name, branch)
+	if err == nil && protection != nil && protection.RequiredStatusChecks != nil {
+		strict = strict || protection.RequiredStatusChecks.Strict
+		// Normalize both Checks and Contexts into Checks entries to avoid dual population.
+		if protection.RequiredStatusChecks.Checks != nil {
+			for _, c := range *protection.RequiredStatusChecks.Checks {
+				if c == nil {
+					continue
+				}
+				key := checkKey{context: c.Context}
+				if c.AppID != nil {
+					key.hasAppID = true
+					key.appID = *c.AppID
+				}
+				checksSet[key] = struct{}{}
+			}
+		}
+		if protection.RequiredStatusChecks.Contexts != nil {
+			for _, ctxName := range *protection.RequiredStatusChecks.Contexts {
+				key := checkKey{context: ctxName}
+				checksSet[key] = struct{}{}
+			}
+		}
+	} else if err != nil {
+		// Non-404s are significant; 404 just means no protection on this branch.
+		// We'll log at trace and continue to gather rules-based checks.
+		l.Logger.Trace("GetBranchProtection failed", "repo", repo.GetFullName(), "branch", branch, "error", err)
+	}
+
+	// 2) Rules that apply to this branch (rulesets API): returns only effective rules.
+	rules, _, err := l.githubClient.Repositories.GetRulesForBranch(ctx, owner, name, branch)
 	if err != nil {
-		return nil, err
+		// If rules API fails, still return what we have from protection.
+		l.Logger.Trace("GetRulesForBranch failed", "repo", repo.GetFullName(), "branch", branch, "error", err)
+	} else if rules != nil && rules.RequiredStatusChecks != nil {
+		for _, r := range rules.RequiredStatusChecks {
+			if r == nil {
+				continue
+			}
+			// Merge strict policy from ruleset parameters (aka up-to-date requirement).
+			strict = strict || r.Parameters.StrictRequiredStatusChecksPolicy
+			// Merge individual required checks.
+			for _, rc := range r.Parameters.RequiredStatusChecks {
+				if rc == nil {
+					continue
+				}
+				key := checkKey{context: rc.Context}
+				if rc.IntegrationID != nil {
+					key.hasAppID = true
+					key.appID = *rc.IntegrationID
+				}
+				checksSet[key] = struct{}{}
+			}
+		}
 	}
-	if protection != nil && protection.RequiredStatusChecks != nil {
-		return protection.RequiredStatusChecks, nil
+
+	// If no checks found from either source, return nil to indicate absence.
+	if len(checksSet) == 0 {
+		if !strict {
+			return nil, nil
+		}
+		// If strict is set without explicit checks (edge), still return an empty set with strict.
 	}
-	return nil, nil
+
+	// Build a deterministic slice of checks.
+	outChecks := make([]*github.RequiredStatusCheck, 0, len(checksSet))
+	for key := range checksSet {
+		chk := &github.RequiredStatusCheck{Context: key.context}
+		if key.hasAppID {
+			chk.AppID = github.Ptr(key.appID)
+		}
+		outChecks = append(outChecks, chk)
+	}
+
+	result := &github.RequiredStatusChecks{
+		Strict: strict,
+	}
+	// Always prefer Checks representation to avoid populating both fields.
+	result.Checks = &outChecks
+	return result, nil
 }
 
 func (l *GithubReposPlugin) GatherSBOM(ctx context.Context, repo *github.Repository) (*github.SBOM, error) {
@@ -472,7 +558,7 @@ func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *Saturate
 		}
 	}
 
-	return evidences, nil
+	return evidences, accumulatedErrors
 }
 
 func main() {
