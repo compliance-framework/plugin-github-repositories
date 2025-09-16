@@ -54,7 +54,7 @@ type SaturatedRepository struct {
 	// RequiredStatusChecks maps branch name -> required status checks configuration
 	RequiredStatusChecks map[string]*github.RequiredStatusChecks `json:"required_status_checks"`
 	SBOM                 *github.SBOM                            `json:"sbom"`
-	PullRequests         []*github.PullRequest                   `json:"pull_requests"`
+	OpenPullRequests     []*github.PullRequest                   `json:"pull_requests"`
 }
 
 type GithubReposPlugin struct {
@@ -168,7 +168,7 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				}, err
 			}
 
-			pullRequests, err := l.GatherPullRequests(ctx, repo)
+			pullRequests, err := l.GatherOpenPullRequests(ctx, repo)
 			if err != nil {
 				l.Logger.Error("error gathering pull requests", "error", err)
 				return &proto.EvalResponse{
@@ -183,7 +183,7 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				ProtectedBranches:    branchNames,
 				RequiredStatusChecks: requiredChecks,
 				SBOM:                 sbom,
-				PullRequests:         pullRequests,
+				OpenPullRequests:     pullRequests,
 			}
 
 			// Uncomment to check the data that is being passed through from
@@ -430,11 +430,12 @@ func (l *GithubReposPlugin) GatherSBOM(ctx context.Context, repo *github.Reposit
 	return sbom, nil
 }
 
-func (l *GithubReposPlugin) GatherPullRequests(ctx context.Context, repo *github.Repository) ([]*github.PullRequest, error) {
+func (l *GithubReposPlugin) GatherOpenPullRequests(ctx context.Context, repo *github.Repository) ([]*github.PullRequest, error) {
 	opts := &github.ListOptions{
 		PerPage: 100,
 	}
 	pullRequests, _, err := l.githubClient.PullRequests.List(ctx, repo.GetOwner().GetLogin(), repo.GetName(), &github.PullRequestListOptions{
+		State:       "open",
 		ListOptions: *opts,
 	})
 	if err != nil {
