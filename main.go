@@ -192,7 +192,7 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 			jsonData, _ := json.MarshalIndent(data, "", "  ")
 			err = os.WriteFile(fmt.Sprintf("./dist/%s.json", repo.GetName()), jsonData, 0o644)
 			if err != nil {
-				l.Logger.Error("failed to write file: %v", err)
+				l.Logger.Error("failed to write file", "error", err)
 			}
 
 			evidences, err := l.EvaluatePolicies(ctx, data, req)
