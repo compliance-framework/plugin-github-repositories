@@ -54,6 +54,7 @@ type SaturatedRepository struct {
 	// RequiredStatusChecks maps branch name -> required status checks configuration
 	RequiredStatusChecks map[string]*github.RequiredStatusChecks `json:"required_status_checks"`
 	SBOM                 *github.SBOM                            `json:"sbom"`
+	OpenPullRequests     []*github.PullRequest                   `json:"pull_requests"`
 }
 
 type GithubReposPlugin struct {
@@ -167,6 +168,14 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				}, err
 			}
 
+			pullRequests, err := l.GatherOpenPullRequests(ctx, repo)
+			if err != nil {
+				l.Logger.Error("error gathering pull requests", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
+
 			data := &SaturatedRepository{
 				Settings:             repo,
 				Workflows:            workflows,
@@ -174,13 +183,17 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				ProtectedBranches:    branchNames,
 				RequiredStatusChecks: requiredChecks,
 				SBOM:                 sbom,
+				OpenPullRequests:     pullRequests,
 			}
 
 			// Uncomment to check the data that is being passed through from
 			// the client, as data formats are often slightly different than
 			// the raw API endpoints
 			jsonData, _ := json.MarshalIndent(data, "", "  ")
-			_ = os.WriteFile(fmt.Sprintf("./dist/%s.json", repo.GetName()), jsonData, 0644)
+			err = os.WriteFile(fmt.Sprintf("./dist/%s.json", repo.GetName()), jsonData, 0o644)
+			if err != nil {
+				l.Logger.Error("failed to write file", "error", err)
+			}
 
 			evidences, err := l.EvaluatePolicies(ctx, data, req)
 			if err != nil {
@@ -233,7 +246,6 @@ func (l *GithubReposPlugin) FetchRepositories(ctx context.Context, req *proto.Ev
 			repos, resp, err := l.githubClient.Repositories.ListByOrg(ctx, l.config.Organization, &github.RepositoryListByOrgOptions{
 				ListOptions: *paginationOpts,
 			})
-
 			if err != nil {
 				errchan <- err
 				done = true
@@ -418,6 +430,20 @@ func (l *GithubReposPlugin) GatherSBOM(ctx context.Context, repo *github.Reposit
 	return sbom, nil
 }
 
+func (l *GithubReposPlugin) GatherOpenPullRequests(ctx context.Context, repo *github.Repository) ([]*github.PullRequest, error) {
+	opts := &github.ListOptions{
+		PerPage: 100,
+	}
+	pullRequests, _, err := l.githubClient.PullRequests.List(ctx, repo.GetOwner().GetLogin(), repo.GetName(), &github.PullRequestListOptions{
+		State:       "open",
+		ListOptions: *opts,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return pullRequests, nil
+}
+
 func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *SaturatedRepository, req *proto.EvalRequest) ([]*proto.Evidence, error) {
 	var accumulatedErrors error
 
@@ -581,5 +607,4 @@ func main() {
 		},
 		GRPCServer: goplugin.DefaultGRPCServer,
 	})
-
 }
