@@ -210,10 +210,6 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 					Status: proto.ExecutionStatus_FAILURE,
 				}, err
 			}
-			evidenceJson, err := json.MarshalIndent(evidences, "", "  ")
-			if err != nil {
-				l.Logger.Error("failed to marshal evidences", "error", err)
-			}
 
 			if err := apiHelper.CreateEvidence(ctx, evidences); err != nil {
 				l.Logger.Error("Error creating evidence", "error", err)
