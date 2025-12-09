@@ -214,7 +214,6 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 			if err != nil {
 				l.Logger.Error("failed to marshal evidences", "error", err)
 			}
-			l.Logger.Debug("Evidence", "evidence", string(evidenceJson))
 
 			if err := apiHelper.CreateEvidence(ctx, evidences); err != nil {
 				l.Logger.Error("Error creating evidence", "error", err)
