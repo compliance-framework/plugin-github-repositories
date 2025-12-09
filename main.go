@@ -54,6 +54,7 @@ type SaturatedRepository struct {
 	// RequiredStatusChecks maps branch name -> required status checks configuration
 	RequiredStatusChecks map[string]*github.RequiredStatusChecks `json:"required_status_checks"`
 	SBOM                 *github.SBOM                            `json:"sbom"`
+	LastRelease          *github.RepositoryRelease               `json:"last_release"`
 	OpenPullRequests     []*github.PullRequest                   `json:"pull_requests"`
 }
 
@@ -175,13 +176,20 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 					Status: proto.ExecutionStatus_FAILURE,
 				}, err
 			}
-
+			release, err := l.FecthLatestRelease(ctx, repo)
+			if err != nil {
+				l.Logger.Error("error gathering latest release", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
 			data := &SaturatedRepository{
 				Settings:             repo,
 				Workflows:            workflows,
 				WorkflowRuns:         workflowRuns,
 				ProtectedBranches:    branchNames,
 				RequiredStatusChecks: requiredChecks,
+				LastRelease:          release,
 				SBOM:                 sbom,
 				OpenPullRequests:     pullRequests,
 			}
@@ -202,6 +210,11 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 					Status: proto.ExecutionStatus_FAILURE,
 				}, err
 			}
+			evidenceJson, err := json.MarshalIndent(evidences, "", "  ")
+			if err != nil {
+				l.Logger.Error("failed to marshal evidences", "error", err)
+			}
+			l.Logger.Debug("Evidence", "evidence", string(evidenceJson))
 
 			if err := apiHelper.CreateEvidence(ctx, evidences); err != nil {
 				l.Logger.Error("Error creating evidence", "error", err)
@@ -280,6 +293,23 @@ func (l *GithubReposPlugin) FetchRepositories(ctx context.Context, req *proto.Ev
 	}()
 
 	return repochan, errchan
+}
+
+func (l *GithubReposPlugin) FecthLatestRelease(ctx context.Context, repo *github.Repository) (*github.RepositoryRelease, error) {
+	owner := repo.GetOwner().GetLogin()
+	name := repo.GetName()
+
+	release, resp, err := l.githubClient.Repositories.GetLatestRelease(ctx, owner, name)
+	if err != nil {
+		// If there is simply no release, GitHub returns 404. Treat this as "no release" rather than a hard error.
+		if resp != nil && resp.Response != nil && resp.StatusCode == 404 {
+			l.Logger.Trace("No releases found for repository", "repo", repo.GetFullName())
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return release, nil
 }
 
 func (l *GithubReposPlugin) GatherConfiguredWorkflows(ctx context.Context, repo *github.Repository) ([]*github.Workflow, error) {
