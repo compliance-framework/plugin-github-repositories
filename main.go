@@ -450,6 +450,11 @@ func (l *GithubReposPlugin) GetRequiredStatusChecks(ctx context.Context, repo *g
 func (l *GithubReposPlugin) GatherSBOM(ctx context.Context, repo *github.Repository) (*github.SBOM, error) {
 	sbom, _, err := l.githubClient.DependencyGraph.GetSBOM(ctx, repo.GetOwner().GetLogin(), repo.GetName())
 	if err != nil {
+		// Permissions errors should be treated as safe here
+		// The policy will fail anyways if no sbom exists.
+		if isPermissionError(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return sbom, nil
@@ -610,6 +615,24 @@ func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *Saturate
 	}
 
 	return evidences, accumulatedErrors
+}
+
+// isPermissionError returns true if the error from the GitHub client indicates
+// a permissions or visibility issue (e.g., 401/403/404).
+func isPermissionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ger *github.ErrorResponse
+	if errors.As(err, &ger) {
+		if ger.Response != nil {
+			switch ger.Response.StatusCode {
+			case 401, 403, 404:
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func main() {
