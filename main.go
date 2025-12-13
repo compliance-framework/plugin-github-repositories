@@ -448,7 +448,10 @@ func (l *GithubReposPlugin) GetRequiredStatusChecks(ctx context.Context, repo *g
 }
 
 func (l *GithubReposPlugin) GatherSBOM(ctx context.Context, repo *github.Repository) (*github.SBOM, error) {
-	sbom, _, err := l.githubClient.DependencyGraph.GetSBOM(ctx, repo.GetOwner().GetLogin(), repo.GetName())
+	sbom, resp, err := l.githubClient.DependencyGraph.GetSBOM(ctx, repo.GetOwner().GetLogin(), repo.GetName())
+	if resp.StatusCode == 404 {
+		return nil, nil
+	}
 	if err != nil {
 		// Permissions errors should be treated as safe here
 		// The policy will fail anyways if no sbom exists.
