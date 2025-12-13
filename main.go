@@ -2,17 +2,21 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/bradleyfalzon/ghinstallation/v2"
 	policyManager "github.com/compliance-framework/agent/policy-manager"
 	"github.com/compliance-framework/agent/runner"
 	"github.com/compliance-framework/agent/runner/proto"
-	"github.com/google/go-github/v71/github"
+	"github.com/google/go-github/v72/github"
 	"github.com/hashicorp/go-hclog"
 	goplugin "github.com/hashicorp/go-plugin"
 	"github.com/mitchellh/mapstructure"
@@ -24,6 +28,10 @@ type Validator interface {
 
 type PluginConfig struct {
 	Token                string `mapstructure:"token"`
+	AppID                string `mapstructure:"app_id"`
+	InstallationID       string `mapstructure:"installation_id"`
+	PrivateKeyFile       string `mapstructure:"private_key_file"`
+	PrivateKey           string `mapstructure:"private_key"`
 	Organization         string `mapstructure:"organization"`
 	IncludedRepositories string `mapstructure:"included_repositories"`
 	ExcludedRepositories string `mapstructure:"excluded_repositories"`
@@ -31,7 +39,9 @@ type PluginConfig struct {
 
 func (c *PluginConfig) Validate() error {
 	if c.Token == "" {
-		return fmt.Errorf("token is required")
+		if c.AppID == "" || c.InstallationID == "" || (c.PrivateKeyFile == "" && c.PrivateKey == "") {
+			return errors.New("neither token nor app credentials were provided")
+		}
 	}
 	if c.Organization == "" {
 		return fmt.Errorf("organization is required")
@@ -80,9 +90,48 @@ func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.Confi
 	}
 
 	l.config = config
-	l.githubClient = github.NewClient(nil).WithAuthToken(config.Token)
+	client, err := newGithubClient(config)
+	if err != nil {
+		l.Logger.Error("Error creating Github Client", "error", err)
+		return nil, err
+	}
+	l.githubClient = client
 
 	return &proto.ConfigureResponse{}, nil
+}
+
+func newGithubClient(config *PluginConfig) (*github.Client, error) {
+	// defaults to token for backwards compatibility
+	if config.Token != "" {
+		return github.NewClient(nil).WithAuthToken(config.Token), nil
+	}
+	appId, err := strconv.ParseInt(config.AppID, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("could not parse app id: %w", err)
+	}
+	installationId, err := strconv.ParseInt(config.InstallationID, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("could not parse installation id: %w", err)
+	}
+	var privateKey []byte
+	// defaults to file reading as this is safer security wise
+	if config.PrivateKeyFile != "" {
+		privateKey, err = os.ReadFile(config.PrivateKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("could not read private key file: %w", err)
+		}
+	} else if config.PrivateKey != "" {
+		privateKey, err = base64.StdEncoding.DecodeString(config.PrivateKey)
+		if err != nil {
+			return nil, fmt.Errorf("could not decode private key: %w", err)
+		}
+	}
+	itr, err := ghinstallation.New(http.DefaultTransport, appId, installationId, privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("could not instantiate new installation transport: %w", err)
+	}
+	client := github.NewClient(&http.Client{Transport: itr})
+	return client, nil
 }
 
 func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHelper) (*proto.EvalResponse, error) {
@@ -395,7 +444,7 @@ func (l *GithubReposPlugin) GetRequiredStatusChecks(ctx context.Context, repo *g
 	}
 
 	// 2) Rules that apply to this branch (rulesets API): returns only effective rules.
-	rules, _, err := l.githubClient.Repositories.GetRulesForBranch(ctx, owner, name, branch)
+	rules, _, err := l.githubClient.Repositories.GetRulesForBranch(ctx, owner, name, branch, &github.ListOptions{})
 	if err != nil {
 		// If rules API fails, still return what we have from protection.
 		l.Logger.Trace("GetRulesForBranch failed", "repo", repo.GetFullName(), "branch", branch, "error", err)
