@@ -16,6 +16,8 @@ import (
 	"github.com/hashicorp/go-hclog"
 	goplugin "github.com/hashicorp/go-plugin"
 	"github.com/mitchellh/mapstructure"
+	"github.com/shurcooL/githubv4"
+	"golang.org/x/oauth2"
 )
 
 type Validator interface {
@@ -55,14 +57,17 @@ type SaturatedRepository struct {
 	RequiredStatusChecks map[string]*github.RequiredStatusChecks `json:"required_status_checks"`
 	SBOM                 *github.SBOM                            `json:"sbom"`
 	LastRelease          *github.RepositoryRelease               `json:"last_release"`
-	OpenPullRequests     []*github.PullRequest                   `json:"pull_requests"`
+	OpenPullRequests     []*OpenPullRequest                      `json:"pull_requests"`
+	CodeOwners           *github.RepositoryContent               `json:"code_owners"`
+	OrgTeams             []*OrgTeam                              `json:"org_teams"`
 }
 
 type GithubReposPlugin struct {
 	Logger hclog.Logger
 
-	config       *PluginConfig
-	githubClient *github.Client
+	config        *PluginConfig
+	githubClient  *github.Client
+	graphqlClient *githubv4.Client
 }
 
 func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.ConfigureResponse, error) {
@@ -80,7 +85,11 @@ func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.Confi
 	}
 
 	l.config = config
-	l.githubClient = github.NewClient(nil).WithAuthToken(config.Token)
+	httpClient := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(&oauth2.Token{
+		AccessToken: config.Token,
+	}))
+	l.githubClient = github.NewClient(httpClient)
+	l.graphqlClient = githubv4.NewClient(httpClient)
 
 	return &proto.ConfigureResponse{}, nil
 }
@@ -89,6 +98,14 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 	ctx := context.TODO()
 	repochan, errchan := l.FetchRepositories(ctx, req)
 	done := false
+
+	orgTeams, err := l.GatherOrgTeams(ctx)
+	if err != nil {
+		l.Logger.Error("Error gathering organization teams", "error", err)
+		return &proto.EvalResponse{
+			Status: proto.ExecutionStatus_FAILURE,
+		}, err
+	}
 
 	for !done {
 		select {
@@ -176,9 +193,23 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 					Status: proto.ExecutionStatus_FAILURE,
 				}, err
 			}
+			openPullRequests, err := l.GatherReviewsAndComments(ctx, repo, pullRequests)
+			if err != nil {
+				l.Logger.Error("error gathering pull request reviews/comments", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
 			release, err := l.FecthLatestRelease(ctx, repo)
 			if err != nil {
 				l.Logger.Error("error gathering latest release", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
+			codeOwners, err := l.FetchCodeOwners(ctx, repo)
+			if err != nil {
+				l.Logger.Error("error gathering CODEOWNERS", "error", err)
 				return &proto.EvalResponse{
 					Status: proto.ExecutionStatus_FAILURE,
 				}, err
@@ -191,13 +222,15 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				RequiredStatusChecks: requiredChecks,
 				LastRelease:          release,
 				SBOM:                 sbom,
-				OpenPullRequests:     pullRequests,
+				OpenPullRequests:     openPullRequests,
+				CodeOwners:           codeOwners,
+				OrgTeams:             orgTeams,
 			}
-
 			// Uncomment to check the data that is being passed through from
 			// the client, as data formats are often slightly different than
 			// the raw API endpoints
-			jsonData, _ := json.MarshalIndent(data, "", "  ")
+			jsonData, _ := json.Marshal(data.OpenPullRequests)
+			// l.Logger.Debug("Data", "data", string(jsonData))
 			err = os.WriteFile(fmt.Sprintf("./dist/%s.json", repo.GetName()), jsonData, 0o644)
 			if err != nil {
 				l.Logger.Error("failed to write file", "error", err)
@@ -256,7 +289,6 @@ func (l *GithubReposPlugin) FetchRepositories(ctx context.Context, req *proto.Ev
 			})
 			if err != nil {
 				errchan <- err
-				done = true
 				return
 			}
 
@@ -346,7 +378,7 @@ func (l *GithubReposPlugin) ListProtectedBranches(ctx context.Context, repo *git
 		if resp.NextPage == 0 {
 			break
 		}
-		opts.ListOptions.Page = resp.NextPage
+		opts.Page = resp.NextPage
 	}
 	return out, nil
 }
