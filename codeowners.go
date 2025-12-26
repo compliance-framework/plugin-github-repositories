@@ -26,17 +26,14 @@ func (l *GithubReposPlugin) FetchCodeOwners(ctx context.Context, repo *github.Re
 				continue
 			}
 			if isPermissionError(err) {
-				l.Logger.Debug("CODEOWNERS fetch skipped due to permissions", "repo", repo.GetFullName(), "path", path, "error", err)
 				return nil, nil
 			}
 			return nil, err
 		}
 		if file != nil {
-			l.Logger.Debug("Found CODEOWNERS file", "repo", repo.GetFullName(), "path", path)
 			return file, nil
 		}
 	}
 
-	l.Logger.Debug("No CODEOWNERS file found for repository", "repo", repo.GetFullName())
 	return nil, nil
 }

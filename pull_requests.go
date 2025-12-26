@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/google/go-github/v71/github"
@@ -96,9 +95,6 @@ func (l *GithubReposPlugin) GatherReviewsAndComments(ctx context.Context, repo *
 		l.Logger.Error("failed to fetch pull request review threads", "error", err)
 		return ProcessOpenPullRequests(prs, reviewsByPR, nil), nil
 	}
-	l.Logger.Debug("fetched pull request review threads", "count", len(threadsByReview))
-	threadsJson, _ := json.Marshal(threadsByReview)
-	l.Logger.Debug("fetched pull request review threads", "threads", string(threadsJson))
 
 	return ProcessOpenPullRequests(prs, reviewsByPR, threadsByReview), nil
 }

@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 
@@ -125,8 +123,6 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				done = true
 				continue
 			}
-			l.Logger.Debug("Processing repository:", "repo_name", repo.GetName())
-
 			workflows, err := l.GatherConfiguredWorkflows(ctx, repo)
 			if err != nil {
 				l.Logger.Error("Error gathering workflows", "error", err)
@@ -159,10 +155,8 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 					continue
 				}
 				name := b.GetName()
-				l.Logger.Debug("Found protected branch", "branch", name)
 				branchNames = append(branchNames, name)
 				protection, checks, err := l.GetBranchProtectionAndRequiredStatusCheck(ctx, repo, name)
-				l.Logger.Debug("Fetched branch protection info", "branch", name, "protection", protection, "checks", checks)
 				if err != nil {
 					l.Logger.Trace("Branch protection fetch failed", "repo", repo.GetFullName(), "branch", name, "error", err)
 					continue
@@ -176,7 +170,6 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 			}
 			// Fallback to default branch if none collected
 			if len(requiredChecks) == 0 {
-				l.Logger.Debug("No protected branches with required status checks found, checking default branch", "repo", repo.GetFullName())
 				if def := repo.GetDefaultBranch(); def != "" {
 					if protection, checks, err := l.GetBranchProtectionAndRequiredStatusCheck(ctx, repo, def); err == nil {
 						if protection != nil {
@@ -243,13 +236,6 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 			// Uncomment to check the data that is being passed through from
 			// the client, as data formats are often slightly different than
 			// the raw API endpoints
-			jsonData, _ := json.Marshal(data.OpenPullRequests)
-			// l.Logger.Debug("Data", "data", string(jsonData))
-			err = os.WriteFile(fmt.Sprintf("./dist/%s.json", repo.GetName()), jsonData, 0o644)
-			if err != nil {
-				l.Logger.Error("failed to write file", "error", err)
-			}
-
 			evidences, err := l.EvaluatePolicies(ctx, data, req)
 			if err != nil {
 				l.Logger.Error("Error evaluating policies", "error", err)
@@ -265,7 +251,6 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				}, err
 			}
 
-			l.Logger.Debug("Successfully processed repository:", "repo_name", repo.GetName())
 		}
 	}
 
@@ -325,7 +310,7 @@ func (l *GithubReposPlugin) FetchRepositories(ctx context.Context, req *proto.Ev
 				repochan <- repo
 			}
 
-			if resp.NextPage == 0 {
+			if resp == nil || resp.NextPage == 0 {
 				done = true
 			} else {
 				paginationOpts.Page = resp.NextPage
@@ -388,7 +373,7 @@ func (l *GithubReposPlugin) ListProtectedBranches(ctx context.Context, repo *git
 			return nil, err
 		}
 		out = append(out, branches...)
-		if resp.NextPage == 0 {
+		if resp == nil || resp.NextPage == 0 {
 			break
 		}
 		opts.Page = resp.NextPage
