@@ -38,7 +38,7 @@ func (l *GithubReposPlugin) FetchPullRequestReviews(ctx context.Context, repo *g
 				return nil, err
 			}
 			reviews = append(reviews, batch...)
-			if resp != nil && resp.NextPage == 0 {
+			if resp == nil || resp.NextPage == 0 {
 				break
 			}
 			opts.Page = resp.NextPage
