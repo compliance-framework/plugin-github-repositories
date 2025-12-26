@@ -8,6 +8,11 @@ import (
 	"github.com/shurcooL/githubv4"
 )
 
+const (
+	reviewThreadPageSize  = 50
+	threadCommentPageSize = 50
+)
+
 // FetchPullRequestReviews returns a map keyed by pull request ID containing all reviews for each PR.
 func (l *GithubReposPlugin) FetchPullRequestReviews(ctx context.Context, repo *github.Repository, prs []*github.PullRequest) (map[int64][]*github.PullRequestReview, error) {
 	reviewsByPR := make(map[int64][]*github.PullRequestReview, len(prs))
@@ -90,7 +95,7 @@ func (l *GithubReposPlugin) GatherReviewsAndComments(ctx context.Context, repo *
 		return ProcessOpenPullRequests(prs, nil, nil), nil
 	}
 
-	threadsByReview, err := l.FetchReviewThreads(ctx, reviewsByPR)
+	threadsByReview, err := l.FetchReviewThreads(ctx, prs, reviewsByPR)
 	if err != nil {
 		l.Logger.Error("failed to fetch pull request review threads", "error", err)
 		return ProcessOpenPullRequests(prs, reviewsByPR, nil), nil
@@ -109,13 +114,28 @@ func pullRequestKey(pr *github.PullRequest) int64 {
 	return int64(pr.GetNumber())
 }
 
-func (l *GithubReposPlugin) FetchReviewThreads(ctx context.Context, reviewsByPR map[int64][]*github.PullRequestReview) (map[int64][]*PullRequestReviewThread, error) {
+func (l *GithubReposPlugin) FetchReviewThreads(ctx context.Context, prs []*github.PullRequest, reviewsByPR map[int64][]*github.PullRequestReview) (map[int64][]*PullRequestReviewThread, error) {
 	threadsByReview := make(map[int64][]*PullRequestReviewThread)
 	if l.graphqlClient == nil {
 		return threadsByReview, nil
 	}
 
-	for _, reviewList := range reviewsByPR {
+	for _, pr := range prs {
+		if pr == nil {
+			continue
+		}
+		prNodeID := pr.GetNodeID()
+		if prNodeID == "" {
+			continue
+		}
+
+		prKey := pullRequestKey(pr)
+		reviewList := reviewsByPR[prKey]
+		if len(reviewList) == 0 {
+			continue
+		}
+
+		reviewNodeToID := make(map[string]int64, len(reviewList))
 		for _, review := range reviewList {
 			if review == nil {
 				continue
@@ -124,12 +144,38 @@ func (l *GithubReposPlugin) FetchReviewThreads(ctx context.Context, reviewsByPR 
 			if nodeID == "" {
 				continue
 			}
-			threadList, err := l.fetchThreadsForReview(ctx, nodeID)
-			if err != nil {
-				return nil, err
+			reviewNodeToID[nodeID] = review.GetID()
+		}
+		if len(reviewNodeToID) == 0 {
+			continue
+		}
+
+		threadList, err := l.fetchThreadsForPullRequest(ctx, prNodeID)
+		if err != nil {
+			return nil, err
+		}
+		if len(threadList) == 0 {
+			continue
+		}
+
+		for _, thread := range threadList {
+			if thread == nil {
+				continue
 			}
-			if len(threadList) > 0 {
-				threadsByReview[review.GetID()] = threadList
+			reviewsForThread := make(map[int64]struct{})
+			for _, comment := range thread.Comments {
+				if comment == nil || comment.ReviewID == "" {
+					continue
+				}
+				if reviewID, ok := reviewNodeToID[comment.ReviewID]; ok {
+					reviewsForThread[reviewID] = struct{}{}
+				}
+			}
+			if len(reviewsForThread) == 0 {
+				continue
+			}
+			for reviewID := range reviewsForThread {
+				threadsByReview[reviewID] = append(threadsByReview[reviewID], thread)
 			}
 		}
 	}
@@ -137,62 +183,114 @@ func (l *GithubReposPlugin) FetchReviewThreads(ctx context.Context, reviewsByPR 
 	return threadsByReview, nil
 }
 
-func (l *GithubReposPlugin) fetchThreadsForReview(ctx context.Context, reviewNodeID string) ([]*PullRequestReviewThread, error) {
-	const pageSize = 50
+func (l *GithubReposPlugin) fetchThreadsForPullRequest(ctx context.Context, prNodeID string) ([]*PullRequestReviewThread, error) {
 	var threads []*PullRequestReviewThread
-	var cursor *githubv4.String
+	var threadCursor *githubv4.String
 
 	for {
 		var query struct {
 			Node struct {
-				PullRequestReview struct {
-					PullRequest struct {
-						ReviewThreads struct {
-							Nodes    []reviewThreadNode
-							PageInfo struct {
-								HasNextPage githubv4.Boolean
-								EndCursor   githubv4.String
-							}
-						} `graphql:"reviewThreads(first: $threadsFirst, after: $threadsCursor)"`
-					} `graphql:"pullRequest"`
-				} `graphql:"... on PullRequestReview"`
-			} `graphql:"node(id: $reviewID)"`
+				PullRequest struct {
+					ReviewThreads struct {
+						Nodes    []reviewThreadNode
+						PageInfo struct {
+							HasNextPage githubv4.Boolean
+							EndCursor   githubv4.String
+						}
+					} `graphql:"reviewThreads(first: $threadsFirst, after: $threadsCursor)"`
+				} `graphql:"... on PullRequest"`
+			} `graphql:"node(id: $pullRequestID)"`
 		}
 
 		variables := map[string]interface{}{
-			"reviewID":      githubv4.ID(reviewNodeID),
-			"threadsFirst":  githubv4.Int(pageSize),
-			"threadsCursor": cursor,
+			"pullRequestID": githubv4.ID(prNodeID),
+			"threadsFirst":  githubv4.Int(reviewThreadPageSize),
+			"threadsCursor": threadCursor,
+			"commentsFirst": githubv4.Int(threadCommentPageSize),
 		}
 
 		if err := l.graphqlClient.Query(ctx, &query, variables); err != nil {
 			return nil, err
 		}
 
-		threadConnection := query.Node.PullRequestReview.PullRequest.ReviewThreads
+		threadConnection := query.Node.PullRequest.ReviewThreads
 		for _, node := range threadConnection.Nodes {
-			if !threadIncludesReview(node, reviewNodeID) {
-				continue
+			threadNode := node
+			if bool(node.Comments.PageInfo.HasNextPage) {
+				additional, err := l.fetchAdditionalThreadComments(ctx, node.ID, node.Comments.PageInfo.EndCursor)
+				if err != nil {
+					return nil, err
+				}
+				threadNode.Comments.Nodes = append(threadNode.Comments.Nodes, additional...)
 			}
-			threads = append(threads, convertGraphQLThread(node))
+			threads = append(threads, convertGraphQLThread(threadNode))
 		}
 
 		if !bool(threadConnection.PageInfo.HasNextPage) {
 			break
 		}
 		next := threadConnection.PageInfo.EndCursor
-		cursor = &next
+		threadCursor = new(githubv4.String)
+		*threadCursor = next
 	}
 
 	return threads, nil
+}
+
+func (l *GithubReposPlugin) fetchAdditionalThreadComments(ctx context.Context, threadID githubv4.ID, startCursor githubv4.String) ([]reviewThreadCommentNode, error) {
+	var allComments []reviewThreadCommentNode
+	cursor := new(githubv4.String)
+	*cursor = startCursor
+
+	for {
+		var query struct {
+			Node struct {
+				PullRequestReviewThread struct {
+					Comments struct {
+						Nodes    []reviewThreadCommentNode
+						PageInfo struct {
+							HasNextPage githubv4.Boolean
+							EndCursor   githubv4.String
+						}
+					} `graphql:"comments(first: $commentsFirst, after: $commentsCursor)"`
+				} `graphql:"... on PullRequestReviewThread"`
+			} `graphql:"node(id: $threadID)"`
+		}
+
+		variables := map[string]interface{}{
+			"threadID":       threadID,
+			"commentsFirst":  githubv4.Int(threadCommentPageSize),
+			"commentsCursor": cursor,
+		}
+
+		if err := l.graphqlClient.Query(ctx, &query, variables); err != nil {
+			return nil, err
+		}
+
+		commentConnection := query.Node.PullRequestReviewThread.Comments
+		allComments = append(allComments, commentConnection.Nodes...)
+
+		if !bool(commentConnection.PageInfo.HasNextPage) {
+			break
+		}
+		next := commentConnection.PageInfo.EndCursor
+		cursor = new(githubv4.String)
+		*cursor = next
+	}
+
+	return allComments, nil
 }
 
 type reviewThreadNode struct {
 	ID         githubv4.ID
 	IsResolved githubv4.Boolean
 	Comments   struct {
-		Nodes []reviewThreadCommentNode `graphql:"nodes"`
-	} `graphql:"comments(first: 100)"`
+		Nodes    []reviewThreadCommentNode
+		PageInfo struct {
+			HasNextPage githubv4.Boolean
+			EndCursor   githubv4.String
+		}
+	} `graphql:"comments(first: $commentsFirst)"`
 }
 
 type reviewThreadCommentNode struct {
@@ -231,7 +329,6 @@ func convertGraphQLThreadComment(node reviewThreadCommentNode) *PullRequestRevie
 		ID:       idToString(node.ID),
 		Body:     string(node.Body),
 		URL:      node.URL.String(),
-		Author:   string(node.Author.Login),
 		DiffHunk: string(node.DiffHunk),
 		Path:     string(node.Path),
 	}
@@ -249,27 +346,15 @@ func convertGraphQLThreadComment(node reviewThreadCommentNode) *PullRequestRevie
 			comment.ReplyToID = replyTo
 		}
 	}
+	if node.PullRequestReview != nil {
+		comment.ReviewID = idToString(node.PullRequestReview.ID)
+	}
 	created := node.CreatedAt.Time
 	comment.CreatedAt = &created
 	updated := node.UpdatedAt.Time
 	comment.UpdatedAt = &updated
 
 	return comment
-}
-
-func threadIncludesReview(node reviewThreadNode, reviewNodeID string) bool {
-	if reviewNodeID == "" {
-		return false
-	}
-	for _, comment := range node.Comments.Nodes {
-		if comment.PullRequestReview == nil {
-			continue
-		}
-		if idToString(comment.PullRequestReview.ID) == reviewNodeID {
-			return true
-		}
-	}
-	return false
 }
 
 func idToString(id githubv4.ID) string {

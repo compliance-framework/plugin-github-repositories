@@ -32,9 +32,9 @@ type PullRequestReviewThreadComment struct {
 	ID               string     `json:"id"`
 	Body             string     `json:"body"`
 	URL              string     `json:"url"`
-	Author           string     `json:"author"`
-	DiffHunk         string     `json:"diff_hunk,omitempty"`
-	Path             string     `json:"path,omitempty"`
+	ReviewID         string     `json:"review_id,omitempty"`
+	DiffHunk         string     `json:"diff_hunk"`
+	Path             string     `json:"path"`
 	Position         *int       `json:"position,omitempty"`
 	OriginalPosition *int       `json:"original_position,omitempty"`
 	ReplyToID        string     `json:"reply_to_id,omitempty"`
