@@ -53,6 +53,8 @@ type SaturatedRepository struct {
 	WorkflowRuns []*github.WorkflowRun `json:"workflow_runs"`
 	// ProtectedBranches is the list of protected branches in the repository
 	ProtectedBranches []string `json:"protected_branches"`
+	// BranchProtectionRules maps branch name -> full branch protection configuration
+	BranchProtectionRules map[string]*github.Protection `json:"branch_protection_rules"`
 	// RequiredStatusChecks maps branch name -> required status checks configuration
 	RequiredStatusChecks map[string]*github.RequiredStatusChecks `json:"required_status_checks"`
 	SBOM                 *github.SBOM                            `json:"sbom"`
@@ -150,6 +152,7 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				}, err
 			}
 			branchNames := make([]string, 0, len(branches))
+			branchProtectionRules := make(map[string]*github.Protection)
 			requiredChecks := make(map[string]*github.RequiredStatusChecks)
 			for _, b := range branches {
 				if b == nil || b.Name == nil {
@@ -158,11 +161,14 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				name := b.GetName()
 				l.Logger.Debug("Found protected branch", "branch", name)
 				branchNames = append(branchNames, name)
-				checks, err := l.GetRequiredStatusChecks(ctx, repo, name)
-				l.Logger.Debug("Fetched required status checks", "branch", name, "checks", checks)
+				protection, checks, err := l.GetBranchProtectionAndRequiredStatusCheck(ctx, repo, name)
+				l.Logger.Debug("Fetched branch protection info", "branch", name, "protection", protection, "checks", checks)
 				if err != nil {
-					l.Logger.Trace("Branch required checks fetch failed", "repo", repo.GetFullName(), "branch", name, "error", err)
+					l.Logger.Trace("Branch protection fetch failed", "repo", repo.GetFullName(), "branch", name, "error", err)
 					continue
+				}
+				if protection != nil {
+					branchProtectionRules[name] = protection
 				}
 				if checks != nil {
 					requiredChecks[name] = checks
@@ -172,8 +178,15 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 			if len(requiredChecks) == 0 {
 				l.Logger.Debug("No protected branches with required status checks found, checking default branch", "repo", repo.GetFullName())
 				if def := repo.GetDefaultBranch(); def != "" {
-					if checks, err := l.GetRequiredStatusChecks(ctx, repo, def); err == nil && checks != nil {
-						requiredChecks[def] = checks
+					if protection, checks, err := l.GetBranchProtectionAndRequiredStatusCheck(ctx, repo, def); err == nil {
+						if protection != nil {
+							branchProtectionRules[def] = protection
+						}
+						if checks != nil {
+							requiredChecks[def] = checks
+						}
+					} else {
+						l.Logger.Trace("Default branch protection fetch failed", "repo", repo.GetFullName(), "branch", def, "error", err)
 					}
 				}
 			}
@@ -215,16 +228,17 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				}, err
 			}
 			data := &SaturatedRepository{
-				Settings:             repo,
-				Workflows:            workflows,
-				WorkflowRuns:         workflowRuns,
-				ProtectedBranches:    branchNames,
-				RequiredStatusChecks: requiredChecks,
-				LastRelease:          release,
-				SBOM:                 sbom,
-				OpenPullRequests:     openPullRequests,
-				CodeOwners:           codeOwners,
-				OrgTeams:             orgTeams,
+				Settings:              repo,
+				Workflows:             workflows,
+				WorkflowRuns:          workflowRuns,
+				ProtectedBranches:     branchNames,
+				BranchProtectionRules: branchProtectionRules,
+				RequiredStatusChecks:  requiredChecks,
+				LastRelease:           release,
+				SBOM:                  sbom,
+				OpenPullRequests:      openPullRequests,
+				CodeOwners:            codeOwners,
+				OrgTeams:              orgTeams,
 			}
 			// Uncomment to check the data that is being passed through from
 			// the client, as data formats are often slightly different than
@@ -363,7 +377,6 @@ func (l *GithubReposPlugin) GatherWorkflowRuns(ctx context.Context, repo *github
 func (l *GithubReposPlugin) ListProtectedBranches(ctx context.Context, repo *github.Repository) ([]*github.Branch, error) {
 	owner := repo.GetOwner().GetLogin()
 	name := repo.GetName()
-
 	opts := &github.BranchListOptions{
 		Protected:   github.Ptr(true),
 		ListOptions: github.ListOptions{PerPage: 100, Page: 1},
@@ -383,7 +396,7 @@ func (l *GithubReposPlugin) ListProtectedBranches(ctx context.Context, repo *git
 	return out, nil
 }
 
-func (l *GithubReposPlugin) GetRequiredStatusChecks(ctx context.Context, repo *github.Repository, branch string) (*github.RequiredStatusChecks, error) {
+func (l *GithubReposPlugin) GetBranchProtectionAndRequiredStatusCheck(ctx context.Context, repo *github.Repository, branch string) (*github.Protection, *github.RequiredStatusChecks, error) {
 	owner := repo.GetOwner().GetLogin()
 	name := repo.GetName()
 
@@ -397,30 +410,34 @@ func (l *GithubReposPlugin) GetRequiredStatusChecks(ctx context.Context, repo *g
 	checksSet := make(map[checkKey]struct{})
 
 	// 1) Legacy branch protection settings (if present).
+	var branchProtection *github.Protection
 	protection, _, err := l.githubClient.Repositories.GetBranchProtection(ctx, owner, name, branch)
-	if err == nil && protection != nil && protection.RequiredStatusChecks != nil {
-		strict = strict || protection.RequiredStatusChecks.Strict
-		// Normalize both Checks and Contexts into Checks entries to avoid dual population.
-		if protection.RequiredStatusChecks.Checks != nil {
-			for _, c := range *protection.RequiredStatusChecks.Checks {
-				if c == nil {
-					continue
+	if err == nil && protection != nil {
+		branchProtection = protection
+		if protection.RequiredStatusChecks != nil {
+			strict = strict || protection.RequiredStatusChecks.Strict
+			// Normalize both Checks and Contexts into Checks entries to avoid dual population.
+			if protection.RequiredStatusChecks.Checks != nil {
+				for _, c := range *protection.RequiredStatusChecks.Checks {
+					if c == nil {
+						continue
+					}
+					key := checkKey{context: c.Context}
+					if c.AppID != nil {
+						key.hasAppID = true
+						key.appID = *c.AppID
+					}
+					checksSet[key] = struct{}{}
 				}
-				key := checkKey{context: c.Context}
-				if c.AppID != nil {
-					key.hasAppID = true
-					key.appID = *c.AppID
+			}
+			if protection.RequiredStatusChecks.Contexts != nil {
+				for _, ctxName := range *protection.RequiredStatusChecks.Contexts {
+					key := checkKey{context: ctxName}
+					checksSet[key] = struct{}{}
 				}
-				checksSet[key] = struct{}{}
 			}
 		}
-		if protection.RequiredStatusChecks.Contexts != nil {
-			for _, ctxName := range *protection.RequiredStatusChecks.Contexts {
-				key := checkKey{context: ctxName}
-				checksSet[key] = struct{}{}
-			}
-		}
-	} else if err != nil {
+	} else if err != nil && !errors.Is(err, github.ErrBranchNotProtected) {
 		// Non-404s are significant; 404 just means no protection on this branch.
 		// We'll log at trace and continue to gather rules-based checks.
 		l.Logger.Trace("GetBranchProtection failed", "repo", repo.GetFullName(), "branch", branch, "error", err)
@@ -456,7 +473,7 @@ func (l *GithubReposPlugin) GetRequiredStatusChecks(ctx context.Context, repo *g
 	// If no checks found from either source, return nil to indicate absence.
 	if len(checksSet) == 0 {
 		if !strict {
-			return nil, nil
+			return branchProtection, nil, nil
 		}
 		// If strict is set without explicit checks (edge), still return an empty set with strict.
 	}
@@ -476,7 +493,7 @@ func (l *GithubReposPlugin) GetRequiredStatusChecks(ctx context.Context, repo *g
 	}
 	// Always prefer Checks representation to avoid populating both fields.
 	result.Checks = &outChecks
-	return result, nil
+	return branchProtection, result, nil
 }
 
 func (l *GithubReposPlugin) GatherSBOM(ctx context.Context, repo *github.Repository) (*github.SBOM, error) {
