@@ -29,7 +29,7 @@ type PluginConfig struct {
 	IncludedRepositories     string `mapstructure:"included_repositories"`
 	ExcludedRepositories     string `mapstructure:"excluded_repositories"`
 	DeploymentLookbackDays   int    `mapstructure:"deployment_lookback_days"`   // Number of days to look back for deployments (default: 90)
-	OnlyActiveDeployments    bool   `mapstructure:"only_active_deployments"`    // Only fetch deployments that are still active (not superseded) (default: true)
+	OnlyActiveDeployments    bool   `mapstructure:"only_active_deployments"`    // Only fetch deployments that are still active (not superseded) (default: false)
 	IncludeFailedDeployments bool   `mapstructure:"include_failed_deployments"` // Include deployments with failure/error states (default: false)
 }
 
