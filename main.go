@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,9 +29,14 @@ type PluginConfig struct {
 	Organization             string `mapstructure:"organization"`
 	IncludedRepositories     string `mapstructure:"included_repositories"`
 	ExcludedRepositories     string `mapstructure:"excluded_repositories"`
-	DeploymentLookbackDays   int    `mapstructure:"deployment_lookback_days"`   // Number of days to look back for deployments (default: 90)
-	OnlyActiveDeployments    bool   `mapstructure:"only_active_deployments"`    // Only fetch deployments that are still active (not superseded) (default: false)
-	IncludeFailedDeployments bool   `mapstructure:"include_failed_deployments"` // Include deployments with failure/error states (default: false)
+	DeploymentLookbackDays   string `mapstructure:"deployment_lookback_days"`   // Number of days to look back for deployments (default: 90)
+	OnlyActiveDeployments    string `mapstructure:"only_active_deployments"`    // Only fetch deployments that are still active (not superseded) (default: false)
+	IncludeFailedDeployments string `mapstructure:"include_failed_deployments"` // Include deployments with failure/error states (default: false)
+
+	// Parsed values (set during Configure)
+	deploymentLookbackDays   int
+	onlyActiveDeployments    bool
+	includeFailedDeployments bool
 }
 
 func (c *PluginConfig) Validate() error {
@@ -46,6 +52,43 @@ func (c *PluginConfig) Validate() error {
 	if c.IncludedRepositories != "" && c.ExcludedRepositories != "" {
 		return fmt.Errorf("only one of included_repositories or excluded_repositories may be set")
 	}
+	return nil
+}
+
+func (c *PluginConfig) parseDeploymentConfig() error {
+	// Parse deployment lookback days (default: 90)
+	if c.DeploymentLookbackDays == "" {
+		c.deploymentLookbackDays = 90
+	} else {
+		days, err := strconv.Atoi(c.DeploymentLookbackDays)
+		if err != nil {
+			return fmt.Errorf("invalid deployment_lookback_days: %w", err)
+		}
+		c.deploymentLookbackDays = days
+	}
+
+	// Parse only active deployments (default: false)
+	if c.OnlyActiveDeployments == "" {
+		c.onlyActiveDeployments = false
+	} else {
+		active, err := strconv.ParseBool(c.OnlyActiveDeployments)
+		if err != nil {
+			return fmt.Errorf("invalid only_active_deployments: %w", err)
+		}
+		c.onlyActiveDeployments = active
+	}
+
+	// Parse include failed deployments (default: false)
+	if c.IncludeFailedDeployments == "" {
+		c.includeFailedDeployments = false
+	} else {
+		include, err := strconv.ParseBool(c.IncludeFailedDeployments)
+		if err != nil {
+			return fmt.Errorf("invalid include_failed_deployments: %w", err)
+		}
+		c.includeFailedDeployments = include
+	}
+
 	return nil
 }
 
@@ -94,15 +137,11 @@ func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.Confi
 		return nil, err
 	}
 
-	// Set default deployment lookback period if not specified
-	if config.DeploymentLookbackDays == 0 {
-		config.DeploymentLookbackDays = 90
+	// Parse deployment configuration from strings
+	if err := config.parseDeploymentConfig(); err != nil {
+		l.Logger.Error("Error parsing deployment config", "error", err)
+		return nil, err
 	}
-
-	// Default to only active deployments (not superseded)
-	// Note: OnlyActiveDeployments defaults to false (zero value), so we need to check if it was explicitly set
-	// For now, we'll treat false as "fetch all" and true as "only active"
-	// IncludeFailedDeployments defaults to false, which means we skip failed deployments by default
 
 	l.config = config
 	httpClient := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(&oauth2.Token{
@@ -392,7 +431,7 @@ func (l *GithubReposPlugin) FetchDeploymentsWithStatuses(ctx context.Context, re
 	name := repo.GetName()
 
 	// Calculate cutoff time based on configured lookback period
-	cutoffTime := time.Now().AddDate(0, 0, -l.config.DeploymentLookbackDays)
+	cutoffTime := time.Now().AddDate(0, 0, -l.config.deploymentLookbackDays)
 
 	opts := &github.DeploymentsListOptions{
 		ListOptions: github.ListOptions{PerPage: 100, Page: 1},
@@ -440,7 +479,7 @@ func (l *GithubReposPlugin) FetchDeploymentsWithStatuses(ctx context.Context, re
 		opts.Page = resp.NextPage
 	}
 
-	l.Logger.Debug("Fetched deployments", "repo", repo.GetFullName(), "count", len(deploymentsWithStatuses), "lookback_days", l.config.DeploymentLookbackDays)
+	l.Logger.Debug("Fetched deployments", "repo", repo.GetFullName(), "count", len(deploymentsWithStatuses), "lookback_days", l.config.deploymentLookbackDays)
 	return deploymentsWithStatuses, nil
 }
 
@@ -456,13 +495,13 @@ func (l *GithubReposPlugin) shouldSkipDeployment(deployment *github.Deployment, 
 	latestState := latestStatus.GetState()
 
 	// Filter inactive deployments if OnlyActiveDeployments is enabled
-	if l.config.OnlyActiveDeployments && latestState == "inactive" {
+	if l.config.onlyActiveDeployments && latestState == "inactive" {
 		l.Logger.Trace("Skipping inactive deployment", "deployment_id", deployment.GetID(), "state", latestState)
 		return true
 	}
 
 	// Filter failed/error deployments if IncludeFailedDeployments is false (default)
-	if !l.config.IncludeFailedDeployments {
+	if !l.config.includeFailedDeployments {
 		if latestState == "failure" || latestState == "error" {
 			l.Logger.Trace("Skipping failed deployment", "deployment_id", deployment.GetID(), "state", latestState)
 			return true
