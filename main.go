@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	policyManager "github.com/compliance-framework/agent/policy-manager"
 	"github.com/compliance-framework/agent/runner"
@@ -23,10 +24,13 @@ type Validator interface {
 }
 
 type PluginConfig struct {
-	Token                string `mapstructure:"token"`
-	Organization         string `mapstructure:"organization"`
-	IncludedRepositories string `mapstructure:"included_repositories"`
-	ExcludedRepositories string `mapstructure:"excluded_repositories"`
+	Token                    string `mapstructure:"token"`
+	Organization             string `mapstructure:"organization"`
+	IncludedRepositories     string `mapstructure:"included_repositories"`
+	ExcludedRepositories     string `mapstructure:"excluded_repositories"`
+	DeploymentLookbackDays   int    `mapstructure:"deployment_lookback_days"`   // Number of days to look back for deployments (default: 90)
+	OnlyActiveDeployments    bool   `mapstructure:"only_active_deployments"`    // Only fetch deployments that are still active (not superseded) (default: false)
+	IncludeFailedDeployments bool   `mapstructure:"include_failed_deployments"` // Include deployments with failure/error states (default: false)
 }
 
 func (c *PluginConfig) Validate() error {
@@ -45,6 +49,11 @@ func (c *PluginConfig) Validate() error {
 	return nil
 }
 
+type DeploymentWithStatuses struct {
+	Deployment *github.Deployment         `json:"deployment"`
+	Statuses   []*github.DeploymentStatus `json:"statuses"`
+}
+
 type SaturatedRepository struct {
 	Settings     *github.Repository    `json:"settings"`
 	Workflows    []*github.Workflow    `json:"workflows"`
@@ -60,6 +69,7 @@ type SaturatedRepository struct {
 	OpenPullRequests     []*OpenPullRequest                      `json:"pull_requests"`
 	CodeOwners           *github.RepositoryContent               `json:"code_owners"`
 	OrgTeams             []*OrgTeam                              `json:"org_teams"`
+	Deployments          []*DeploymentWithStatuses               `json:"deployments"`
 }
 
 type GithubReposPlugin struct {
@@ -83,6 +93,16 @@ func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.Confi
 		l.Logger.Error("Error validating config", "error", err)
 		return nil, err
 	}
+
+	// Set default deployment lookback period if not specified
+	if config.DeploymentLookbackDays == 0 {
+		config.DeploymentLookbackDays = 90
+	}
+
+	// Default to only active deployments (not superseded)
+	// Note: OnlyActiveDeployments defaults to false (zero value), so we need to check if it was explicitly set
+	// For now, we'll treat false as "fetch all" and true as "only active"
+	// IncludeFailedDeployments defaults to false, which means we skip failed deployments by default
 
 	l.config = config
 	httpClient := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(&oauth2.Token{
@@ -220,6 +240,13 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 					Status: proto.ExecutionStatus_FAILURE,
 				}, err
 			}
+			deployments, err := l.FetchDeploymentsWithStatuses(ctx, repo)
+			if err != nil {
+				l.Logger.Error("error gathering deployments", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
 			data := &SaturatedRepository{
 				Settings:              repo,
 				Workflows:             workflows,
@@ -232,6 +259,7 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				OpenPullRequests:      openPullRequests,
 				CodeOwners:            codeOwners,
 				OrgTeams:              orgTeams,
+				Deployments:           deployments,
 			}
 			// Uncomment to check the data that is being passed through from
 			// the client, as data formats are often slightly different than
@@ -357,6 +385,91 @@ func (l *GithubReposPlugin) GatherWorkflowRuns(ctx context.Context, repo *github
 		return nil, err
 	}
 	return workflowRuns.WorkflowRuns, nil
+}
+
+func (l *GithubReposPlugin) FetchDeploymentsWithStatuses(ctx context.Context, repo *github.Repository) ([]*DeploymentWithStatuses, error) {
+	owner := repo.GetOwner().GetLogin()
+	name := repo.GetName()
+
+	// Calculate cutoff time based on configured lookback period
+	cutoffTime := time.Now().AddDate(0, 0, -l.config.DeploymentLookbackDays)
+
+	opts := &github.DeploymentsListOptions{
+		ListOptions: github.ListOptions{PerPage: 100, Page: 1},
+	}
+
+	var deploymentsWithStatuses []*DeploymentWithStatuses
+
+	for {
+		deployments, resp, err := l.githubClient.Repositories.ListDeployments(ctx, owner, name, opts)
+		if err != nil {
+			if isPermissionError(err) {
+				l.Logger.Trace("No permission to fetch deployments", "repo", repo.GetFullName())
+				return nil, nil
+			}
+			return nil, err
+		}
+
+		for _, deployment := range deployments {
+			// Skip deployments older than the lookback period
+			if deployment.CreatedAt != nil && deployment.CreatedAt.Before(cutoffTime) {
+				l.Logger.Trace("Skipping old deployment", "deployment_id", deployment.GetID(), "created_at", deployment.CreatedAt.Time, "cutoff", cutoffTime)
+				continue
+			}
+
+			statuses, _, err := l.githubClient.Repositories.ListDeploymentStatuses(ctx, owner, name, deployment.GetID(), &github.ListOptions{PerPage: 100})
+			if err != nil {
+				l.Logger.Warn("Error fetching deployment statuses", "deployment_id", deployment.GetID(), "error", err)
+				continue
+			}
+
+			// Check if deployment should be filtered based on status
+			if l.shouldSkipDeployment(deployment, statuses) {
+				continue
+			}
+
+			deploymentsWithStatuses = append(deploymentsWithStatuses, &DeploymentWithStatuses{
+				Deployment: deployment,
+				Statuses:   statuses,
+			})
+		}
+
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	l.Logger.Debug("Fetched deployments", "repo", repo.GetFullName(), "count", len(deploymentsWithStatuses), "lookback_days", l.config.DeploymentLookbackDays)
+	return deploymentsWithStatuses, nil
+}
+
+// shouldSkipDeployment determines if a deployment should be filtered out based on configuration
+func (l *GithubReposPlugin) shouldSkipDeployment(deployment *github.Deployment, statuses []*github.DeploymentStatus) bool {
+	if len(statuses) == 0 {
+		// No statuses yet - include it (deployment is pending)
+		return false
+	}
+
+	// Get the latest status (statuses are returned in reverse chronological order)
+	latestStatus := statuses[0]
+	latestState := latestStatus.GetState()
+
+	// Filter inactive deployments if OnlyActiveDeployments is enabled
+	if l.config.OnlyActiveDeployments && latestState == "inactive" {
+		l.Logger.Trace("Skipping inactive deployment", "deployment_id", deployment.GetID(), "state", latestState)
+		return true
+	}
+
+	// Filter failed/error deployments if IncludeFailedDeployments is false (default)
+	if !l.config.IncludeFailedDeployments {
+		if latestState == "failure" || latestState == "error" {
+			l.Logger.Trace("Skipping failed deployment", "deployment_id", deployment.GetID(), "state", latestState)
+			return true
+		}
+	}
+
+	return false
 }
 
 func (l *GithubReposPlugin) ListProtectedBranches(ctx context.Context, repo *github.Repository) ([]*github.Branch, error) {
