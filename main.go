@@ -153,6 +153,32 @@ func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.Confi
 	return &proto.ConfigureResponse{}, nil
 }
 
+func (l *GithubReposPlugin) Init(req *proto.InitRequest, apiHelper runner.ApiHelper) (*proto.InitResponse, error) {
+	ctx := context.Background()
+
+	subjectTemplates := []*proto.SubjectTemplate{
+		{
+			Name:                "github-repository",
+			Type:                proto.SubjectType_SUBJECT_TYPE_COMPONENT,
+			TitleTemplate:       "GitHub Repository: {{ .repository_name }}",
+			DescriptionTemplate: "GitHub repository {{ .repository_name }} in organization {{ .organization }}",
+			PurposeTemplate:     "Represents a GitHub repository being monitored for compliance",
+			IdentityLabelKeys:   []string{"repository_name", "organization", "_plugin"},
+			SelectorLabels: []*proto.SubjectLabelSelector{
+				{Key: "_plugin", Value: "github-repositories"},
+			},
+			LabelSchema: []*proto.SubjectLabelSchema{
+				{Key: "repository_name", Description: "The name of the GitHub repository"},
+				{Key: "organization", Description: "The GitHub organization owning the repository"},
+				{Key: "repository_url", Description: "The HTML URL of the GitHub repository"},
+				{Key: "_plugin", Description: "The plugin identifier"},
+			},
+		},
+	}
+
+	return runner.InitWithSubjectsAndRisksFromPolicies(ctx, l.Logger, req, apiHelper, subjectTemplates)
+}
+
 func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHelper) (*proto.EvalResponse, error) {
 	ctx := context.TODO()
 	repochan, errchan := l.FetchRepositories(ctx, req)
@@ -835,7 +861,7 @@ func main() {
 	goplugin.Serve(&goplugin.ServeConfig{
 		HandshakeConfig: runner.HandshakeConfig,
 		Plugins: map[string]goplugin.Plugin{
-			"runner": &runner.RunnerGRPCPlugin{
+			"runner": &runner.RunnerV2GRPCPlugin{
 				Impl: ghRepos,
 			},
 		},
