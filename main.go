@@ -160,16 +160,15 @@ func (l *GithubReposPlugin) Init(req *proto.InitRequest, apiHelper runner.ApiHel
 		{
 			Name:                "github-repository",
 			Type:                proto.SubjectType_SUBJECT_TYPE_COMPONENT,
-			TitleTemplate:       "GitHub Repository: {{ .repository_name }}",
-			DescriptionTemplate: "GitHub repository {{ .repository_name }} in organization {{ .organization }}",
+			TitleTemplate:       "GitHub Repository: {{ .repository }}",
+			DescriptionTemplate: "GitHub repository {{ .repository }} in organization {{ .organization }}",
 			PurposeTemplate:     "Represents a GitHub repository being monitored for compliance",
-			IdentityLabelKeys:   []string{"repository_name", "organization"},
+			IdentityLabelKeys:   []string{"repository", "organization"},
 			// Only label needed is the configuration from the agent
 			SelectorLabels: []*proto.SubjectLabelSelector{},
 			LabelSchema: []*proto.SubjectLabelSchema{
-				{Key: "repository_name", Description: "The name of the GitHub repository"},
+				{Key: "repository", Description: "The name of the GitHub repository"},
 				{Key: "organization", Description: "The GitHub organization owning the repository"},
-				{Key: "repository_url", Description: "The HTML URL of the GitHub repository"},
 			},
 		},
 	}
