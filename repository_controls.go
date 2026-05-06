@@ -152,26 +152,35 @@ func (l *GithubReposPlugin) repositoryEnvironmentsFromGitHub(ctx context.Context
 	details := make([]*github.Environment, len(environments))
 
 	var wg sync.WaitGroup
-	limiter := make(chan struct{}, maxEnvironmentDetailConcurrency)
+	jobs := make(chan int)
+	workers := min(maxEnvironmentDetailConcurrency, len(environments))
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				env := environments[i]
+				if env == nil {
+					continue
+				}
+
+				detail, _, err := l.githubClient.Repositories.GetEnvironment(ctx, owner, name, env.GetName())
+				if err != nil {
+					l.Logger.Trace("Repository environment detail fetch failed", "repo", repo.GetFullName(), "environment", env.GetName(), "error", err)
+					detail = env
+				}
+				details[i] = detail
+			}
+		}()
+	}
+
 	for i, env := range environments {
 		if env == nil {
 			continue
 		}
-		wg.Add(1)
-		go func(i int, env *github.Environment) {
-			defer wg.Done()
-
-			limiter <- struct{}{}
-			defer func() { <-limiter }()
-
-			detail, _, err := l.githubClient.Repositories.GetEnvironment(ctx, owner, name, env.GetName())
-			if err != nil {
-				l.Logger.Trace("Repository environment detail fetch failed", "repo", repo.GetFullName(), "environment", env.GetName(), "error", err)
-				detail = env
-			}
-			details[i] = detail
-		}(i, env)
+		jobs <- i
 	}
+	close(jobs)
 	wg.Wait()
 
 	out := make([]*RepositoryEnvironment, 0, len(details))
