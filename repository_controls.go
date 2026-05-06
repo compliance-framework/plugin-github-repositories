@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"sync"
 
 	"github.com/google/go-github/v71/github"
 )
+
+const maxEnvironmentDetailConcurrency = 5
 
 func (l *GithubReposPlugin) GatherRepositoryCollaborators(ctx context.Context, repo *github.Repository) ([]*RepositoryCollaborator, error) {
 	owner := repo.GetOwner().GetLogin()
@@ -101,17 +104,7 @@ func (l *GithubReposPlugin) GatherRepositoryEnvironments(ctx context.Context, re
 		}
 
 		if envResp != nil {
-			for _, env := range envResp.Environments {
-				if env == nil {
-					continue
-				}
-				detail, _, err := l.githubClient.Repositories.GetEnvironment(ctx, owner, name, env.GetName())
-				if err != nil {
-					l.Logger.Trace("Repository environment detail fetch failed", "repo", repo.GetFullName(), "environment", env.GetName(), "error", err)
-					detail = env
-				}
-				environments = append(environments, repositoryEnvironmentFromGitHub(detail))
-			}
+			environments = append(environments, l.repositoryEnvironmentsFromGitHub(ctx, repo, envResp.Environments)...)
 		}
 
 		if resp == nil || resp.NextPage == 0 {
@@ -145,13 +138,51 @@ func (l *GithubReposPlugin) GatherEffectiveBranchRules(ctx context.Context, repo
 				return nil, nil
 			}
 			l.Logger.Trace("Effective branch rules fetch failed", "repo", repo.GetFullName(), "branch", branch, "error", err)
-			evidence[branch] = &BranchRuleEvidence{}
 			continue
 		}
 		evidence[branch] = branchRuleEvidenceFromGitHub(rules)
 	}
 
 	return evidence, nil
+}
+
+func (l *GithubReposPlugin) repositoryEnvironmentsFromGitHub(ctx context.Context, repo *github.Repository, environments []*github.Environment) []*RepositoryEnvironment {
+	owner := repo.GetOwner().GetLogin()
+	name := repo.GetName()
+	details := make([]*github.Environment, len(environments))
+
+	var wg sync.WaitGroup
+	limiter := make(chan struct{}, maxEnvironmentDetailConcurrency)
+	for i, env := range environments {
+		if env == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(i int, env *github.Environment) {
+			defer wg.Done()
+
+			limiter <- struct{}{}
+			defer func() { <-limiter }()
+
+			detail, _, err := l.githubClient.Repositories.GetEnvironment(ctx, owner, name, env.GetName())
+			if err != nil {
+				l.Logger.Trace("Repository environment detail fetch failed", "repo", repo.GetFullName(), "environment", env.GetName(), "error", err)
+				detail = env
+			}
+			details[i] = detail
+		}(i, env)
+	}
+	wg.Wait()
+
+	out := make([]*RepositoryEnvironment, 0, len(details))
+	for _, detail := range details {
+		env := repositoryEnvironmentFromGitHub(detail)
+		if env == nil {
+			continue
+		}
+		out = append(out, env)
+	}
+	return out
 }
 
 func branchRuleEvidenceFromGitHub(rules *github.BranchRules) *BranchRuleEvidence {
@@ -203,7 +234,11 @@ func repositoryEnvironmentFromGitHub(env *github.Environment) *RepositoryEnviron
 		}
 	}
 	for _, rule := range env.ProtectionRules {
-		out.ProtectionRules = append(out.ProtectionRules, protectionRuleFromGitHub(rule))
+		protectionRule := protectionRuleFromGitHub(rule)
+		if protectionRule == nil {
+			continue
+		}
+		out.ProtectionRules = append(out.ProtectionRules, protectionRule)
 	}
 
 	return out
@@ -221,7 +256,11 @@ func protectionRuleFromGitHub(rule *github.ProtectionRule) *EnvironmentProtectio
 		PreventSelfReview: rule.GetPreventSelfReview(),
 	}
 	for _, reviewer := range rule.Reviewers {
-		out.Reviewers = append(out.Reviewers, reviewerFromRequiredReviewer(reviewer))
+		requiredReviewer := reviewerFromRequiredReviewer(reviewer)
+		if requiredReviewer == nil {
+			continue
+		}
+		out.Reviewers = append(out.Reviewers, requiredReviewer)
 	}
 
 	return out

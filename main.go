@@ -307,20 +307,15 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 					Status: proto.ExecutionStatus_FAILURE,
 				}, err
 			}
-			deployments, err := l.FetchDeploymentsWithStatuses(ctx, repo)
+			allDeployments, err := l.fetchDeploymentsWithStatuses(ctx, repo)
 			if err != nil {
 				l.Logger.Error("error gathering deployments", "error", err)
 				return &proto.EvalResponse{
 					Status: proto.ExecutionStatus_FAILURE,
 				}, err
 			}
-			failedDeployments, err := l.FetchFailedDeploymentsWithStatuses(ctx, repo)
-			if err != nil {
-				l.Logger.Error("error gathering failed deployments", "error", err)
-				return &proto.EvalResponse{
-					Status: proto.ExecutionStatus_FAILURE,
-				}, err
-			}
+			deployments := l.filterDeployments(allDeployments)
+			failedDeployments := deploymentsWithFailures(allDeployments)
 			collaborators, err := l.GatherRepositoryCollaborators(ctx, repo)
 			if err != nil {
 				l.Logger.Error("error gathering repository collaborators", "error", err)
@@ -495,15 +490,22 @@ func (l *GithubReposPlugin) GatherWorkflowRuns(ctx context.Context, repo *github
 }
 
 func (l *GithubReposPlugin) FetchDeploymentsWithStatuses(ctx context.Context, repo *github.Repository) ([]*DeploymentWithStatuses, error) {
-	return l.fetchDeploymentsWithStatuses(ctx, repo, false)
-}
-
-func (l *GithubReposPlugin) FetchFailedDeploymentsWithStatuses(ctx context.Context, repo *github.Repository) ([]*DeploymentWithStatuses, error) {
-	deployments, err := l.fetchDeploymentsWithStatuses(ctx, repo, true)
+	deployments, err := l.fetchDeploymentsWithStatuses(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
+	return l.filterDeployments(deployments), nil
+}
 
+func (l *GithubReposPlugin) FetchFailedDeploymentsWithStatuses(ctx context.Context, repo *github.Repository) ([]*DeploymentWithStatuses, error) {
+	deployments, err := l.fetchDeploymentsWithStatuses(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	return deploymentsWithFailures(deployments), nil
+}
+
+func deploymentsWithFailures(deployments []*DeploymentWithStatuses) []*DeploymentWithStatuses {
 	var failed []*DeploymentWithStatuses
 	for _, deployment := range deployments {
 		if deploymentHasFailed(deployment) {
@@ -511,10 +513,24 @@ func (l *GithubReposPlugin) FetchFailedDeploymentsWithStatuses(ctx context.Conte
 		}
 	}
 
-	return failed, nil
+	return failed
 }
 
-func (l *GithubReposPlugin) fetchDeploymentsWithStatuses(ctx context.Context, repo *github.Repository, includeSkipped bool) ([]*DeploymentWithStatuses, error) {
+func (l *GithubReposPlugin) filterDeployments(deployments []*DeploymentWithStatuses) []*DeploymentWithStatuses {
+	var filtered []*DeploymentWithStatuses
+	for _, deployment := range deployments {
+		if deployment == nil || deployment.Deployment == nil {
+			continue
+		}
+		if l.shouldSkipDeployment(deployment.Deployment, deployment.Statuses) {
+			continue
+		}
+		filtered = append(filtered, deployment)
+	}
+	return filtered
+}
+
+func (l *GithubReposPlugin) fetchDeploymentsWithStatuses(ctx context.Context, repo *github.Repository) ([]*DeploymentWithStatuses, error) {
 	owner := repo.GetOwner().GetLogin()
 	name := repo.GetName()
 
@@ -547,11 +563,6 @@ func (l *GithubReposPlugin) fetchDeploymentsWithStatuses(ctx context.Context, re
 			statuses, _, err := l.githubClient.Repositories.ListDeploymentStatuses(ctx, owner, name, deployment.GetID(), &github.ListOptions{PerPage: 100})
 			if err != nil {
 				l.Logger.Warn("Error fetching deployment statuses", "deployment_id", deployment.GetID(), "error", err)
-				continue
-			}
-
-			// Check if deployment should be filtered based on status
-			if !includeSkipped && l.shouldSkipDeployment(deployment, statuses) {
 				continue
 			}
 
