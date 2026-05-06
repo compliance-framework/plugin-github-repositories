@@ -140,6 +140,10 @@ func (l *GithubReposPlugin) GatherEffectiveBranchRules(ctx context.Context, repo
 	for branch := range targets {
 		rules, _, err := l.githubClient.Repositories.GetRulesForBranch(ctx, owner, name, branch)
 		if err != nil {
+			if isPermissionError(err) {
+				l.Logger.Debug("Effective branch rules fetch skipped due to permissions", "repo", repo.GetFullName(), "branch", branch, "error", err)
+				return nil, nil
+			}
 			l.Logger.Trace("Effective branch rules fetch failed", "repo", repo.GetFullName(), "branch", branch, "error", err)
 			evidence[branch] = &BranchRuleEvidence{}
 			continue
