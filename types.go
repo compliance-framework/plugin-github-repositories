@@ -49,3 +49,57 @@ type OrgTeam struct {
 	Slug    string   `json:"slug"`
 	Members []string `json:"members"`
 }
+
+type RepositoryCollaborator struct {
+	Login       string          `json:"login"`
+	RoleName    string          `json:"role_name"`
+	Permissions map[string]bool `json:"permissions"`
+}
+
+type RepositoryTeam struct {
+	ID          int64           `json:"id"`
+	Name        string          `json:"name"`
+	Slug        string          `json:"slug"`
+	Permission  string          `json:"permission"`
+	Permissions map[string]bool `json:"permissions"`
+	Members     []string        `json:"members"`
+}
+
+type EnvironmentReviewer struct {
+	Type  string `json:"type"`
+	ID    int64  `json:"id,omitempty"`
+	Login string `json:"login,omitempty"`
+	Slug  string `json:"slug,omitempty"`
+	Name  string `json:"name,omitempty"`
+}
+
+type EnvironmentProtectionRule struct {
+	ID                int64                  `json:"id"`
+	Type              string                 `json:"type"`
+	WaitTimer         int                    `json:"wait_timer,omitempty"`
+	PreventSelfReview bool                   `json:"prevent_self_review"`
+	Reviewers         []*EnvironmentReviewer `json:"reviewers,omitempty"`
+}
+
+type EnvironmentBranchPolicy struct {
+	ProtectedBranches    bool `json:"protected_branches"`
+	CustomBranchPolicies bool `json:"custom_branch_policies"`
+}
+
+type RepositoryEnvironment struct {
+	ID                     int64                        `json:"id"`
+	Name                   string                       `json:"name"`
+	URL                    string                       `json:"url,omitempty"`
+	HTMLURL                string                       `json:"html_url,omitempty"`
+	WaitTimer              int                          `json:"wait_timer,omitempty"`
+	CanAdminsBypass        bool                         `json:"can_admins_bypass"`
+	Reviewers              []*EnvironmentReviewer       `json:"reviewers,omitempty"`
+	ProtectionRules        []*EnvironmentProtectionRule `json:"protection_rules,omitempty"`
+	DeploymentBranchPolicy *EnvironmentBranchPolicy     `json:"deployment_branch_policy,omitempty"`
+}
+
+type BranchRuleEvidence struct {
+	RequiredSignatures  bool     `json:"required_signatures"`
+	RequiredDeployments []string `json:"required_deployments,omitempty"`
+	CodeScanningTools   []string `json:"code_scanning_tools,omitempty"`
+}
