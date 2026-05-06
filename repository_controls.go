@@ -52,6 +52,7 @@ func (l *GithubReposPlugin) GatherRepositoryTeams(ctx context.Context, repo *git
 	owner := repo.GetOwner().GetLogin()
 	name := repo.GetName()
 	opts := &github.ListOptions{PerPage: 100, Page: 1}
+	orgTeamMembers := orgTeamMembersBySlug(orgTeams)
 
 	var teams []*RepositoryTeam
 	for {
@@ -74,7 +75,7 @@ func (l *GithubReposPlugin) GatherRepositoryTeams(ctx context.Context, repo *git
 				Slug:        team.GetSlug(),
 				Permission:  team.GetPermission(),
 				Permissions: copyPermissions(team.GetPermissions()),
-				Members:     membersForOrgTeam(orgTeams, team.GetSlug()),
+				Members:     membersForOrgTeam(orgTeamMembers, team.GetSlug()),
 			})
 		}
 
@@ -133,7 +134,11 @@ func (l *GithubReposPlugin) GatherEffectiveBranchRules(ctx context.Context, repo
 	for branch := range targets {
 		rules, _, err := l.githubClient.Repositories.GetRulesForBranch(ctx, owner, name, branch)
 		if err != nil {
-			if isPermissionError(err) {
+			if isHTTPStatusError(err, 404) {
+				l.Logger.Debug("Effective branch rules fetch skipped for missing branch", "repo", repo.GetFullName(), "branch", branch, "error", err)
+				continue
+			}
+			if isHTTPStatusError(err, 401, 403) {
 				l.Logger.Debug("Effective branch rules fetch skipped due to permissions", "repo", repo.GetFullName(), "branch", branch, "error", err)
 				return nil, nil
 			}
@@ -316,11 +321,20 @@ func reviewerFromRequiredReviewer(reviewer *github.RequiredReviewer) *Environmen
 	return out
 }
 
-func membersForOrgTeam(orgTeams []*OrgTeam, slug string) []string {
+func orgTeamMembersBySlug(orgTeams []*OrgTeam) map[string][]string {
+	members := make(map[string][]string, len(orgTeams))
 	for _, team := range orgTeams {
-		if team != nil && team.Slug == slug {
-			return append([]string{}, team.Members...)
+		if team == nil || team.Slug == "" {
+			continue
 		}
+		members[team.Slug] = append([]string{}, team.Members...)
+	}
+	return members
+}
+
+func membersForOrgTeam(orgTeamMembers map[string][]string, slug string) []string {
+	if members, ok := orgTeamMembers[slug]; ok {
+		return append([]string{}, members...)
 	}
 	return nil
 }

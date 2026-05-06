@@ -921,15 +921,20 @@ func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *Saturate
 // isPermissionError returns true if the error from the GitHub client indicates
 // a permissions or visibility issue (e.g., 401/403/404).
 func isPermissionError(err error) bool {
+	return isHTTPStatusError(err, 401, 403, 404)
+}
+
+func isHTTPStatusError(err error, statusCodes ...int) bool {
 	if err == nil {
 		return false
 	}
 	var ger *github.ErrorResponse
 	if errors.As(err, &ger) {
 		if ger.Response != nil {
-			switch ger.Response.StatusCode {
-			case 401, 403, 404:
-				return true
+			for _, statusCode := range statusCodes {
+				if ger.Response.StatusCode == statusCode {
+					return true
+				}
 			}
 		}
 	}
