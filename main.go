@@ -113,6 +113,11 @@ type SaturatedRepository struct {
 	CodeOwners           *github.RepositoryContent               `json:"code_owners"`
 	OrgTeams             []*OrgTeam                              `json:"org_teams"`
 	Deployments          []*DeploymentWithStatuses               `json:"deployments"`
+	FailedDeployments    []*DeploymentWithStatuses               `json:"failed_deployments"`
+	Collaborators        []*RepositoryCollaborator               `json:"collaborators"`
+	RepositoryTeams      []*RepositoryTeam                       `json:"repository_teams"`
+	Environments         []*RepositoryEnvironment                `json:"environments"`
+	EffectiveBranchRules map[string]*BranchRuleEvidence          `json:"effective_branch_rules"`
 }
 
 type GithubReposPlugin struct {
@@ -309,6 +314,41 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 					Status: proto.ExecutionStatus_FAILURE,
 				}, err
 			}
+			failedDeployments, err := l.FetchFailedDeploymentsWithStatuses(ctx, repo)
+			if err != nil {
+				l.Logger.Error("error gathering failed deployments", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
+			collaborators, err := l.GatherRepositoryCollaborators(ctx, repo)
+			if err != nil {
+				l.Logger.Error("error gathering repository collaborators", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
+			repositoryTeams, err := l.GatherRepositoryTeams(ctx, repo, orgTeams)
+			if err != nil {
+				l.Logger.Error("error gathering repository teams", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
+			environments, err := l.GatherRepositoryEnvironments(ctx, repo)
+			if err != nil {
+				l.Logger.Error("error gathering repository environments", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
+			effectiveBranchRules, err := l.GatherEffectiveBranchRules(ctx, repo, branchNames)
+			if err != nil {
+				l.Logger.Error("error gathering effective branch rules", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
 			data := &SaturatedRepository{
 				Settings:              repo,
 				Workflows:             workflows,
@@ -322,6 +362,11 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				CodeOwners:            codeOwners,
 				OrgTeams:              orgTeams,
 				Deployments:           deployments,
+				FailedDeployments:     failedDeployments,
+				Collaborators:         collaborators,
+				RepositoryTeams:       repositoryTeams,
+				Environments:          environments,
+				EffectiveBranchRules:  effectiveBranchRules,
 			}
 			// Uncomment to check the data that is being passed through from
 			// the client, as data formats are often slightly different than
@@ -450,6 +495,26 @@ func (l *GithubReposPlugin) GatherWorkflowRuns(ctx context.Context, repo *github
 }
 
 func (l *GithubReposPlugin) FetchDeploymentsWithStatuses(ctx context.Context, repo *github.Repository) ([]*DeploymentWithStatuses, error) {
+	return l.fetchDeploymentsWithStatuses(ctx, repo, false)
+}
+
+func (l *GithubReposPlugin) FetchFailedDeploymentsWithStatuses(ctx context.Context, repo *github.Repository) ([]*DeploymentWithStatuses, error) {
+	deployments, err := l.fetchDeploymentsWithStatuses(ctx, repo, true)
+	if err != nil {
+		return nil, err
+	}
+
+	var failed []*DeploymentWithStatuses
+	for _, deployment := range deployments {
+		if deploymentHasFailed(deployment) {
+			failed = append(failed, deployment)
+		}
+	}
+
+	return failed, nil
+}
+
+func (l *GithubReposPlugin) fetchDeploymentsWithStatuses(ctx context.Context, repo *github.Repository, includeSkipped bool) ([]*DeploymentWithStatuses, error) {
 	owner := repo.GetOwner().GetLogin()
 	name := repo.GetName()
 
@@ -486,7 +551,7 @@ func (l *GithubReposPlugin) FetchDeploymentsWithStatuses(ctx context.Context, re
 			}
 
 			// Check if deployment should be filtered based on status
-			if l.shouldSkipDeployment(deployment, statuses) {
+			if !includeSkipped && l.shouldSkipDeployment(deployment, statuses) {
 				continue
 			}
 
@@ -504,6 +569,22 @@ func (l *GithubReposPlugin) FetchDeploymentsWithStatuses(ctx context.Context, re
 
 	l.Logger.Debug("Fetched deployments", "repo", repo.GetFullName(), "count", len(deploymentsWithStatuses), "lookback_days", l.config.deploymentLookbackDays)
 	return deploymentsWithStatuses, nil
+}
+
+func deploymentHasFailed(deployment *DeploymentWithStatuses) bool {
+	if deployment == nil {
+		return false
+	}
+	for _, status := range deployment.Statuses {
+		if status == nil {
+			continue
+		}
+		state := status.GetState()
+		if state == "failure" || state == "error" {
+			return true
+		}
+	}
+	return false
 }
 
 // shouldSkipDeployment determines if a deployment should be filtered out based on configuration
