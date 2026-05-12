@@ -113,6 +113,11 @@ type SaturatedRepository struct {
 	CodeOwners           *github.RepositoryContent               `json:"code_owners"`
 	OrgTeams             []*OrgTeam                              `json:"org_teams"`
 	Deployments          []*DeploymentWithStatuses               `json:"deployments"`
+	FailedDeployments    []*DeploymentWithStatuses               `json:"failed_deployments"`
+	Collaborators        []*RepositoryCollaborator               `json:"collaborators"`
+	RepositoryTeams      []*RepositoryTeam                       `json:"repository_teams"`
+	Environments         []*RepositoryEnvironment                `json:"environments"`
+	EffectiveBranchRules map[string]*BranchRuleEvidence          `json:"effective_branch_rules"`
 }
 
 type GithubReposPlugin struct {
@@ -302,9 +307,39 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 					Status: proto.ExecutionStatus_FAILURE,
 				}, err
 			}
-			deployments, err := l.FetchDeploymentsWithStatuses(ctx, repo)
+			allDeployments, err := l.fetchDeploymentsWithStatuses(ctx, repo)
 			if err != nil {
 				l.Logger.Error("error gathering deployments", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
+			deployments := l.filterDeployments(allDeployments)
+			failedDeployments := deploymentsWithFailures(allDeployments)
+			collaborators, err := l.GatherRepositoryCollaborators(ctx, repo)
+			if err != nil {
+				l.Logger.Error("error gathering repository collaborators", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
+			repositoryTeams, err := l.GatherRepositoryTeams(ctx, repo, orgTeams)
+			if err != nil {
+				l.Logger.Error("error gathering repository teams", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
+			environments, err := l.GatherRepositoryEnvironments(ctx, repo)
+			if err != nil {
+				l.Logger.Error("error gathering repository environments", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
+			effectiveBranchRules, err := l.GatherEffectiveBranchRules(ctx, repo, branchNames)
+			if err != nil {
+				l.Logger.Error("error gathering effective branch rules", "error", err)
 				return &proto.EvalResponse{
 					Status: proto.ExecutionStatus_FAILURE,
 				}, err
@@ -322,6 +357,11 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				CodeOwners:            codeOwners,
 				OrgTeams:              orgTeams,
 				Deployments:           deployments,
+				FailedDeployments:     failedDeployments,
+				Collaborators:         collaborators,
+				RepositoryTeams:       repositoryTeams,
+				Environments:          environments,
+				EffectiveBranchRules:  effectiveBranchRules,
 			}
 			// Uncomment to check the data that is being passed through from
 			// the client, as data formats are often slightly different than
@@ -450,6 +490,47 @@ func (l *GithubReposPlugin) GatherWorkflowRuns(ctx context.Context, repo *github
 }
 
 func (l *GithubReposPlugin) FetchDeploymentsWithStatuses(ctx context.Context, repo *github.Repository) ([]*DeploymentWithStatuses, error) {
+	deployments, err := l.fetchDeploymentsWithStatuses(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	return l.filterDeployments(deployments), nil
+}
+
+func (l *GithubReposPlugin) FetchFailedDeploymentsWithStatuses(ctx context.Context, repo *github.Repository) ([]*DeploymentWithStatuses, error) {
+	deployments, err := l.fetchDeploymentsWithStatuses(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	return deploymentsWithFailures(deployments), nil
+}
+
+func deploymentsWithFailures(deployments []*DeploymentWithStatuses) []*DeploymentWithStatuses {
+	var failed []*DeploymentWithStatuses
+	for _, deployment := range deployments {
+		if deploymentHasFailed(deployment) {
+			failed = append(failed, deployment)
+		}
+	}
+
+	return failed
+}
+
+func (l *GithubReposPlugin) filterDeployments(deployments []*DeploymentWithStatuses) []*DeploymentWithStatuses {
+	var filtered []*DeploymentWithStatuses
+	for _, deployment := range deployments {
+		if deployment == nil || deployment.Deployment == nil {
+			continue
+		}
+		if l.shouldSkipDeployment(deployment.Deployment, deployment.Statuses) {
+			continue
+		}
+		filtered = append(filtered, deployment)
+	}
+	return filtered
+}
+
+func (l *GithubReposPlugin) fetchDeploymentsWithStatuses(ctx context.Context, repo *github.Repository) ([]*DeploymentWithStatuses, error) {
 	owner := repo.GetOwner().GetLogin()
 	name := repo.GetName()
 
@@ -485,11 +566,6 @@ func (l *GithubReposPlugin) FetchDeploymentsWithStatuses(ctx context.Context, re
 				continue
 			}
 
-			// Check if deployment should be filtered based on status
-			if l.shouldSkipDeployment(deployment, statuses) {
-				continue
-			}
-
 			deploymentsWithStatuses = append(deploymentsWithStatuses, &DeploymentWithStatuses{
 				Deployment: deployment,
 				Statuses:   statuses,
@@ -504,6 +580,22 @@ func (l *GithubReposPlugin) FetchDeploymentsWithStatuses(ctx context.Context, re
 
 	l.Logger.Debug("Fetched deployments", "repo", repo.GetFullName(), "count", len(deploymentsWithStatuses), "lookback_days", l.config.deploymentLookbackDays)
 	return deploymentsWithStatuses, nil
+}
+
+func deploymentHasFailed(deployment *DeploymentWithStatuses) bool {
+	if deployment == nil {
+		return false
+	}
+	for _, status := range deployment.Statuses {
+		if status == nil {
+			continue
+		}
+		state := status.GetState()
+		if state == "failure" || state == "error" {
+			return true
+		}
+	}
+	return false
 }
 
 // shouldSkipDeployment determines if a deployment should be filtered out based on configuration
@@ -829,15 +921,20 @@ func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *Saturate
 // isPermissionError returns true if the error from the GitHub client indicates
 // a permissions or visibility issue (e.g., 401/403/404).
 func isPermissionError(err error) bool {
+	return isHTTPStatusError(err, 401, 403, 404)
+}
+
+func isHTTPStatusError(err error, statusCodes ...int) bool {
 	if err == nil {
 		return false
 	}
 	var ger *github.ErrorResponse
 	if errors.As(err, &ger) {
 		if ger.Response != nil {
-			switch ger.Response.StatusCode {
-			case 401, 403, 404:
-				return true
+			for _, statusCode := range statusCodes {
+				if ger.Response.StatusCode == statusCode {
+					return true
+				}
 			}
 		}
 	}
