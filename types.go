@@ -99,7 +99,10 @@ type RepositoryEnvironment struct {
 }
 
 type BranchRuleEvidence struct {
-	RequiredSignatures  bool     `json:"required_signatures"`
-	RequiredDeployments []string `json:"required_deployments,omitempty"`
-	CodeScanningTools   []string `json:"code_scanning_tools,omitempty"`
+	RequiredSignatures           bool     `json:"required_signatures"`
+	RequiredDeployments          []string `json:"required_deployments,omitempty"`
+	CodeScanningTools            []string `json:"code_scanning_tools,omitempty"`
+	RequiredApprovingReviewCount int      `json:"required_approving_review_count,omitempty"`
+	DismissStaleReviewsOnPush    bool     `json:"dismiss_stale_reviews_on_push,omitempty"`
+	RequireCodeOwnerReview       bool     `json:"require_code_owner_review,omitempty"`
 }

@@ -223,6 +223,20 @@ func branchRuleEvidenceFromGitHub(rules *github.BranchRules) *BranchRuleEvidence
 			evidence.CodeScanningTools = append(evidence.CodeScanningTools, tool.Tool)
 		}
 	}
+	for _, rule := range rules.PullRequest {
+		if rule == nil {
+			continue
+		}
+		if rule.Parameters.RequiredApprovingReviewCount > evidence.RequiredApprovingReviewCount {
+			evidence.RequiredApprovingReviewCount = rule.Parameters.RequiredApprovingReviewCount
+		}
+		if rule.Parameters.DismissStaleReviewsOnPush {
+			evidence.DismissStaleReviewsOnPush = true
+		}
+		if rule.Parameters.RequireCodeOwnerReview {
+			evidence.RequireCodeOwnerReview = true
+		}
+	}
 
 	return evidence
 }
