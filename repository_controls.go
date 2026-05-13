@@ -99,7 +99,7 @@ func (l *GithubReposPlugin) GatherRepositoryEnvironments(ctx context.Context, re
 		if err != nil {
 			if isPermissionError(err) {
 				l.Logger.Debug("Repository environments fetch skipped due to permissions", "repo", repo.GetFullName(), "error", err)
-				return nil, nil
+				return []*RepositoryEnvironment{}, nil
 			}
 			return nil, err
 		}
@@ -112,6 +112,10 @@ func (l *GithubReposPlugin) GatherRepositoryEnvironments(ctx context.Context, re
 			break
 		}
 		opts.Page = resp.NextPage
+	}
+
+	if environments == nil {
+		return []*RepositoryEnvironment{}, nil
 	}
 
 	return environments, nil

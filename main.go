@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -32,11 +33,13 @@ type PluginConfig struct {
 	DeploymentLookbackDays   string `mapstructure:"deployment_lookback_days"`   // Number of days to look back for deployments (default: 90)
 	OnlyActiveDeployments    string `mapstructure:"only_active_deployments"`    // Only fetch deployments that are still active (not superseded) (default: false)
 	IncludeFailedDeployments string `mapstructure:"include_failed_deployments"` // Include deployments with failure/error states (default: false)
+	PolicyInput              string `mapstructure:"policy_input"`               // Policy-specific input as JSON string (e.g., {"workflow_names": ["ci.yml", "build.yml"]})
 
 	// Parsed values (set during Configure)
 	deploymentLookbackDays   int
 	onlyActiveDeployments    bool
 	includeFailedDeployments bool
+	policyInputMap           map[string]interface{}
 }
 
 func (c *PluginConfig) Validate() error {
@@ -92,6 +95,21 @@ func (c *PluginConfig) parseDeploymentConfig() error {
 	return nil
 }
 
+func (c *PluginConfig) parsePolicyInput() error {
+	// Parse policy input JSON string (default: empty map)
+	if c.PolicyInput == "" {
+		c.policyInputMap = make(map[string]interface{})
+		return nil
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(c.PolicyInput), &result); err != nil {
+		return fmt.Errorf("invalid policy_input JSON: %w", err)
+	}
+	c.policyInputMap = result
+	return nil
+}
+
 type DeploymentWithStatuses struct {
 	Deployment *github.Deployment         `json:"deployment"`
 	Statuses   []*github.DeploymentStatus `json:"statuses"`
@@ -118,6 +136,7 @@ type SaturatedRepository struct {
 	RepositoryTeams      []*RepositoryTeam                       `json:"repository_teams"`
 	Environments         []*RepositoryEnvironment                `json:"environments"`
 	EffectiveBranchRules map[string]*BranchRuleEvidence          `json:"effective_branch_rules"`
+	PolicyInput          map[string]interface{}                  `json:"policy_input"`
 }
 
 type GithubReposPlugin struct {
@@ -145,6 +164,12 @@ func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.Confi
 	// Parse deployment configuration from strings
 	if err := config.parseDeploymentConfig(); err != nil {
 		l.Logger.Error("Error parsing deployment config", "error", err)
+		return nil, err
+	}
+
+	// Parse policy input JSON string
+	if err := config.parsePolicyInput(); err != nil {
+		l.Logger.Error("Error parsing policy input", "error", err)
 		return nil, err
 	}
 
@@ -362,6 +387,7 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				RepositoryTeams:       repositoryTeams,
 				Environments:          environments,
 				EffectiveBranchRules:  effectiveBranchRules,
+				PolicyInput:           l.config.policyInputMap,
 			}
 			// Uncomment to check the data that is being passed through from
 			// the client, as data formats are often slightly different than
