@@ -1,0 +1,8 @@
+lisa-addressed:
+---
+Comment (dependencies.go:18):
+`dependencyPRMaxPages` is set to 10, which can drive up to 1000 Issues API results per dependency (10 pages × 100). This is materially higher GitHub API usage than the bounded behavior described in the design doc (first 100 open/closed PRs) and could increase rate-limit pressure when scanning many dependencies. Consider reducing the max pages to 1 (100) or making the page cap configurable, while keeping the `*_Capped` flags to indicate truncation.
+
+---
+Comment (dependencies.go:355):
+`DependencyCollectionStatus.Errors` does not use `omitempty`, so leaving it as a nil slice will serialize as `"errors": null`. In `newDependencyCollectionGap`, `CollectionStatus.Errors` is only set when `err != nil`, which means callers can end up emitting `null` instead of an empty list. To keep the JSON shape consistent (and avoid policy code needing to handle both `null` and `[]`), initialize `Errors` to an empty slice when constructing the collection status.
