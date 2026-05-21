@@ -901,6 +901,43 @@ func TestListPullRequestIssuesSortsOpenPullRequestsOldestFirst(t *testing.T) {
 	}
 }
 
+func TestListPullRequestIssuesSortsClosedPullRequestsByRecentUpdate(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	since := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+	mux.HandleFunc("/repos/good/lib/issues", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("state") != "closed" {
+			t.Fatalf("unexpected state: %s", r.URL.Query().Get("state"))
+		}
+		if r.URL.Query().Get("sort") != "updated" {
+			t.Fatalf("unexpected sort: %s", r.URL.Query().Get("sort"))
+		}
+		if r.URL.Query().Get("direction") != "desc" {
+			t.Fatalf("unexpected direction: %s", r.URL.Query().Get("direction"))
+		}
+		if r.URL.Query().Get("since") == "" {
+			t.Fatal("expected since query parameter")
+		}
+		writeJSON(t, w, []map[string]any{{
+			"number":       1,
+			"pull_request": map[string]any{"url": "https://api.github.test/repos/good/lib/pulls/1"},
+		}})
+	})
+
+	plugin := newTestPlugin(t, server.URL)
+	prs, capped, err := plugin.listPullRequestIssues(t.Context(), "good", "lib", "closed", since)
+	if err != nil {
+		t.Fatalf("listPullRequestIssues returned error: %v", err)
+	}
+	if capped {
+		t.Fatal("expected uncapped pull request issue result")
+	}
+	if len(prs) != 1 {
+		t.Fatalf("expected 1 pull request issue, got %d", len(prs))
+	}
+}
+
 func TestListPullRequestIssuesStopsAtMaxPages(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)

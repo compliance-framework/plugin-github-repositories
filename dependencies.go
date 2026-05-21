@@ -566,6 +566,10 @@ func (l *GithubReposPlugin) listPullRequestIssues(ctx context.Context, owner, re
 		opts.Sort = "created"
 		opts.Direction = "asc"
 	}
+	if state == "closed" {
+		opts.Sort = "updated"
+		opts.Direction = "desc"
+	}
 	if !since.IsZero() {
 		opts.Since = since
 	}
