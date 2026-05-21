@@ -1034,7 +1034,7 @@ Each dependency should be referenced in evidence details.
 Recommended dependency identifier:
 
 ```text
-github-repository-dependency/github.com/example/lib@v1.2.3
+github-repository-dependency/ccf/api/github.com/example/lib@v1.2.3
 ```
 
 The first implementation can keep dependencies nested under repository evaluation data. These stable identifiers can be promoted to first-class inventory items later.
@@ -1042,7 +1042,7 @@ The first implementation can keep dependencies nested under repository evaluatio
 Future inventory item example:
 
 ```text
-github-repository-dependency/github.com/example/lib@v1.2.3
+github-repository-dependency/ccf/api/github.com/example/lib@v1.2.3
 ```
 
 This allows future evidence relationships such as:

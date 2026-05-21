@@ -41,16 +41,37 @@ func (l *GithubReposPlugin) gatherRepositoryDependencies(ctx context.Context, re
 	content, err := l.fetchGoMod(ctx, repo)
 	if err != nil {
 		l.Logger.Warn("failed to fetch go.mod for dependency collection", "repo", repo.GetFullName(), "error", err)
+		if onDependency != nil {
+			dep := newDependencyCollectionGap("go_mod_fetch", err)
+			if emitErr := emitDependency(dep, onDependency); emitErr != nil {
+				return []*RepositoryDependency{dep}, emitErr
+			}
+			return []*RepositoryDependency{dep}, nil
+		}
 		return nil, nil
 	}
 	if content == "" {
 		l.Logger.Debug("No go.mod content found for dependency collection", "repo", repo.GetFullName())
+		if onDependency != nil {
+			dep := newDependencyCollectionGap("go_mod_fetch", fmt.Errorf("go.mod content unavailable"))
+			if emitErr := emitDependency(dep, onDependency); emitErr != nil {
+				return []*RepositoryDependency{dep}, emitErr
+			}
+			return []*RepositoryDependency{dep}, nil
+		}
 		return nil, nil
 	}
 
 	modDeps, err := parseGoModDirectDependencies([]byte(content))
 	if err != nil {
 		l.Logger.Warn("failed to parse go.mod for dependency collection", "repo", repo.GetFullName(), "error", err)
+		if onDependency != nil {
+			dep := newDependencyCollectionGap("go_mod_parse", err)
+			if emitErr := emitDependency(dep, onDependency); emitErr != nil {
+				return []*RepositoryDependency{dep}, emitErr
+			}
+			return []*RepositoryDependency{dep}, nil
+		}
 		return nil, nil
 	}
 	l.Logger.Debug("Parsed direct go.mod dependencies", "repo", repo.GetFullName(), "dependencies", len(modDeps))
@@ -311,6 +332,24 @@ func newRepositoryDependency(modDep goModuleDependency) *RepositoryDependency {
 			Errors:           make([]*DependencyCollectionError, 0),
 		},
 	}
+}
+
+func newDependencyCollectionGap(scope string, err error) *RepositoryDependency {
+	dep := &RepositoryDependency{
+		Name:             "dependency-collection-unavailable",
+		Ecosystem:        dependencyEcosystemGo,
+		SourceFile:       dependencySourceGoMod,
+		Repository:       &DependencyRepository{},
+		Health:           &DependencyHealth{},
+		SupplyChain:      &DependencySupplyChain{},
+		CollectionStatus: &DependencyCollectionStatus{},
+	}
+	if err != nil {
+		dep.CollectionStatus.Errors = []*DependencyCollectionError{
+			{Scope: scope, Message: err.Error()},
+		}
+	}
+	return dep
 }
 
 func resolveDependencyRepository(dep *RepositoryDependency) {

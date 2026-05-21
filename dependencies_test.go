@@ -451,6 +451,47 @@ func TestGatherRepositoryDependenciesMissingGoMod(t *testing.T) {
 	}
 }
 
+func TestGatherRepositoryDependenciesMissingGoModEmitsCollectionGapForPolicies(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/source/target/contents/go.mod" {
+			http.NotFound(w, r)
+			return
+		}
+		t.Fatalf("unexpected GitHub API request: %s", r.URL.Path)
+	})
+
+	plugin := newTestPlugin(t, server.URL)
+	repo := &github.Repository{
+		Name:          github.Ptr("target"),
+		DefaultBranch: github.Ptr("main"),
+		Owner:         &github.User{Login: github.Ptr("source")},
+	}
+	emitted := []*RepositoryDependency{}
+	deps, err := plugin.gatherRepositoryDependencies(t.Context(), repo, func(dep *RepositoryDependency) error {
+		emitted = append(emitted, dep)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("gatherRepositoryDependencies returned error: %v", err)
+	}
+	if len(deps) != 1 || len(emitted) != 1 {
+		t.Fatalf("expected one collection gap dependency, got deps=%d emitted=%d", len(deps), len(emitted))
+	}
+	dep := emitted[0]
+	if dep.Name != "dependency-collection-unavailable" {
+		t.Fatalf("expected collection gap dependency name, got %q", dep.Name)
+	}
+	if dep.CollectionStatus == nil || dep.CollectionStatus.DependencyParsed {
+		t.Fatalf("expected dependency parsing to be unavailable, got %#v", dep.CollectionStatus)
+	}
+	if len(dep.CollectionStatus.Errors) != 1 || dep.CollectionStatus.Errors[0].Scope != "go_mod_fetch" {
+		t.Fatalf("expected one go_mod_fetch collection error, got %#v", dep.CollectionStatus.Errors)
+	}
+}
+
 func TestEvaluatePoliciesRunsDependencyPoliciesPerDependency(t *testing.T) {
 	policyDir := filepath.Join(t.TempDir(), "plugin-github-repositories-dependency-policies")
 	if err := os.MkdirAll(policyDir, 0o755); err != nil {
