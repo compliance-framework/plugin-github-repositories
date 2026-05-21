@@ -24,6 +24,7 @@ type goModuleDependency struct {
 	Direct  bool
 }
 
+// GatherRepositoryDependencies returns collected direct dependency facts for a repository.
 func (l *GithubReposPlugin) GatherRepositoryDependencies(ctx context.Context, repo *github.Repository) []*RepositoryDependency {
 	dependencies, err := l.gatherRepositoryDependencies(ctx, repo, nil)
 	if err != nil && l.Logger != nil {
@@ -339,12 +340,12 @@ func newRepositoryDependency(modDep goModuleDependency) *RepositoryDependency {
 
 func newDependencyCollectionGap(scope string, err error) *RepositoryDependency {
 	dep := &RepositoryDependency{
-		Name:             "dependency-collection-unavailable",
-		Ecosystem:        dependencyEcosystemGo,
-		SourceFile:       dependencySourceGoMod,
-		Repository:       &DependencyRepository{},
-		Health:           &DependencyHealth{},
-		SupplyChain:      &DependencySupplyChain{},
+		Name:        "dependency-collection-unavailable",
+		Ecosystem:   dependencyEcosystemGo,
+		SourceFile:  dependencySourceGoMod,
+		Repository:  &DependencyRepository{},
+		Health:      &DependencyHealth{},
+		SupplyChain: &DependencySupplyChain{},
 		CollectionStatus: &DependencyCollectionStatus{
 			Errors: make([]*DependencyCollectionError, 0),
 		},

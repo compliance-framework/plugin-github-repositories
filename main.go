@@ -21,10 +21,12 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// Validator is implemented by configuration values that can validate themselves.
 type Validator interface {
 	Validate() error
 }
 
+// PluginConfig contains user-provided and parsed runtime configuration for the plugin.
 type PluginConfig struct {
 	Token                                   string `mapstructure:"token"`
 	Organization                            string `mapstructure:"organization"`
@@ -54,6 +56,7 @@ type PluginConfig struct {
 	dependencyHealthPRInteractionSampleSize int
 }
 
+// Validate checks required configuration fields and mutually exclusive repository filters.
 func (c *PluginConfig) Validate() error {
 	if c.Token == "" {
 		return fmt.Errorf("token is required")
@@ -173,11 +176,13 @@ func parsePositiveIntConfig(value string, defaultValue int, name string) (int, e
 	return parsed, nil
 }
 
+// DeploymentWithStatuses pairs a deployment with its observed deployment statuses.
 type DeploymentWithStatuses struct {
 	Deployment *github.Deployment         `json:"deployment"`
 	Statuses   []*github.DeploymentStatus `json:"statuses"`
 }
 
+// SaturatedRepository contains all repository facts passed to repository policies.
 type SaturatedRepository struct {
 	Settings     *github.Repository    `json:"settings"`
 	Workflows    []*github.Workflow    `json:"workflows"`
@@ -203,6 +208,7 @@ type SaturatedRepository struct {
 	PolicyInput          map[string]interface{}                  `json:"policy_input"`
 }
 
+// GithubReposPlugin implements the CCF runner interface for GitHub repository evidence.
 type GithubReposPlugin struct {
 	Logger hclog.Logger
 
@@ -211,6 +217,7 @@ type GithubReposPlugin struct {
 	graphqlClient *githubv4.Client
 }
 
+// Configure validates configuration and initializes GitHub REST and GraphQL clients.
 func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.ConfigureResponse, error) {
 	l.Logger.Info("Configuring GitHub Repositories Plugin")
 	config := &PluginConfig{policyData: map[string]interface{}{}}
@@ -269,6 +276,7 @@ func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.Confi
 	return &proto.ConfigureResponse{}, nil
 }
 
+// Init registers subject templates and policy-derived risks for this plugin.
 func (l *GithubReposPlugin) Init(req *proto.InitRequest, apiHelper runner.ApiHelper) (*proto.InitResponse, error) {
 	ctx := context.Background()
 
@@ -292,6 +300,7 @@ func (l *GithubReposPlugin) Init(req *proto.InitRequest, apiHelper runner.ApiHel
 	return runner.InitWithSubjectsAndRisksFromPolicies(ctx, l.Logger, req, apiHelper, subjectTemplates)
 }
 
+// Eval gathers repository evidence, evaluates repository policies, and evaluates dependency policies when configured.
 func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHelper) (*proto.EvalResponse, error) {
 	ctx := context.TODO()
 	policyRequest := requestWithDefaultPolicyBehavior(req)
@@ -557,6 +566,7 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 	}, nil
 }
 
+// FetchRepositories streams repositories selected by the plugin include/exclude configuration.
 func (l *GithubReposPlugin) FetchRepositories(ctx context.Context, req *proto.EvalRequest) (chan *github.Repository, chan error) {
 	repochan := make(chan *github.Repository)
 	errchan := make(chan error)
@@ -619,6 +629,7 @@ func (l *GithubReposPlugin) FetchRepositories(ctx context.Context, req *proto.Ev
 	return repochan, errchan
 }
 
+// FecthLatestRelease retrieves the latest GitHub release, returning nil when none exists.
 func (l *GithubReposPlugin) FecthLatestRelease(ctx context.Context, repo *github.Repository) (*github.RepositoryRelease, error) {
 	owner := repo.GetOwner().GetLogin()
 	name := repo.GetName()
@@ -636,6 +647,7 @@ func (l *GithubReposPlugin) FecthLatestRelease(ctx context.Context, repo *github
 	return release, nil
 }
 
+// GatherConfiguredWorkflows returns workflows configured in the repository.
 func (l *GithubReposPlugin) GatherConfiguredWorkflows(ctx context.Context, repo *github.Repository) ([]*github.Workflow, error) {
 	workflows, _, err := l.githubClient.Actions.ListWorkflows(ctx, repo.GetOwner().GetLogin(), repo.GetName(), nil)
 	if err != nil {
@@ -644,6 +656,7 @@ func (l *GithubReposPlugin) GatherConfiguredWorkflows(ctx context.Context, repo 
 	return workflows.Workflows, nil
 }
 
+// GatherWorkflowRuns returns recent workflow runs for the repository.
 func (l *GithubReposPlugin) GatherWorkflowRuns(ctx context.Context, repo *github.Repository) ([]*github.WorkflowRun, error) {
 	opts := &github.ListOptions{
 		PerPage: 100,
@@ -657,6 +670,7 @@ func (l *GithubReposPlugin) GatherWorkflowRuns(ctx context.Context, repo *github
 	return workflowRuns.WorkflowRuns, nil
 }
 
+// FetchDeploymentsWithStatuses returns filtered deployment evidence with statuses attached.
 func (l *GithubReposPlugin) FetchDeploymentsWithStatuses(ctx context.Context, repo *github.Repository) ([]*DeploymentWithStatuses, error) {
 	deployments, err := l.fetchDeploymentsWithStatuses(ctx, repo)
 	if err != nil {
@@ -665,6 +679,7 @@ func (l *GithubReposPlugin) FetchDeploymentsWithStatuses(ctx context.Context, re
 	return l.filterDeployments(deployments), nil
 }
 
+// FetchFailedDeploymentsWithStatuses returns deployments whose latest collected statuses include failures.
 func (l *GithubReposPlugin) FetchFailedDeploymentsWithStatuses(ctx context.Context, repo *github.Repository) ([]*DeploymentWithStatuses, error) {
 	deployments, err := l.fetchDeploymentsWithStatuses(ctx, repo)
 	if err != nil {
@@ -794,6 +809,7 @@ func (l *GithubReposPlugin) shouldSkipDeployment(deployment *github.Deployment, 
 	return false
 }
 
+// ListProtectedBranches returns all protected branches visible through the GitHub API.
 func (l *GithubReposPlugin) ListProtectedBranches(ctx context.Context, repo *github.Repository) ([]*github.Branch, error) {
 	owner := repo.GetOwner().GetLogin()
 	name := repo.GetName()
@@ -816,6 +832,7 @@ func (l *GithubReposPlugin) ListProtectedBranches(ctx context.Context, repo *git
 	return out, nil
 }
 
+// GetBranchProtectionAndRequiredStatusCheck merges branch protection and ruleset status-check evidence.
 func (l *GithubReposPlugin) GetBranchProtectionAndRequiredStatusCheck(ctx context.Context, repo *github.Repository, branch string) (*github.Protection, *github.RequiredStatusChecks, error) {
 	owner := repo.GetOwner().GetLogin()
 	name := repo.GetName()
@@ -916,6 +933,7 @@ func (l *GithubReposPlugin) GetBranchProtectionAndRequiredStatusCheck(ctx contex
 	return branchProtection, result, nil
 }
 
+// GatherSBOM returns the repository SBOM when GitHub dependency graph access permits it.
 func (l *GithubReposPlugin) GatherSBOM(ctx context.Context, repo *github.Repository) (*github.SBOM, error) {
 	sbom, _, err := l.githubClient.DependencyGraph.GetSBOM(ctx, repo.GetOwner().GetLogin(), repo.GetName())
 	if err != nil {
@@ -929,6 +947,7 @@ func (l *GithubReposPlugin) GatherSBOM(ctx context.Context, repo *github.Reposit
 	return sbom, nil
 }
 
+// GatherOpenPullRequests returns open pull requests for the repository.
 func (l *GithubReposPlugin) GatherOpenPullRequests(ctx context.Context, repo *github.Repository) ([]*github.PullRequest, error) {
 	opts := &github.ListOptions{
 		PerPage: 100,
@@ -943,6 +962,7 @@ func (l *GithubReposPlugin) GatherOpenPullRequests(ctx context.Context, repo *gi
 	return pullRequests, nil
 }
 
+// EvaluatePolicies evaluates repository or dependency policy paths and returns generated evidence.
 func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *SaturatedRepository, dependencies []*RepositoryDependency, policyPaths []string, dependencyPolicyData map[string]interface{}) ([]*proto.Evidence, error) {
 	if data == nil {
 		return nil, errors.New("cannot evaluate policies without repository data")

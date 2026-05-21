@@ -50,12 +50,14 @@ type OrgTeam struct {
 	Members []string `json:"members"`
 }
 
+// RepositoryCollaborator captures a direct repository collaborator and their permissions.
 type RepositoryCollaborator struct {
 	Login       string          `json:"login"`
 	RoleName    string          `json:"role_name"`
 	Permissions map[string]bool `json:"permissions"`
 }
 
+// RepositoryTeam captures a GitHub team with repository access and known members.
 type RepositoryTeam struct {
 	ID          int64           `json:"id"`
 	Name        string          `json:"name"`
@@ -65,6 +67,7 @@ type RepositoryTeam struct {
 	Members     []string        `json:"members"`
 }
 
+// EnvironmentReviewer represents a user or team configured as an environment reviewer.
 type EnvironmentReviewer struct {
 	Type  string `json:"type"`
 	ID    int64  `json:"id,omitempty"`
@@ -73,6 +76,7 @@ type EnvironmentReviewer struct {
 	Name  string `json:"name,omitempty"`
 }
 
+// EnvironmentProtectionRule captures a GitHub environment protection rule.
 type EnvironmentProtectionRule struct {
 	ID                int64                  `json:"id"`
 	Type              string                 `json:"type"`
@@ -81,11 +85,13 @@ type EnvironmentProtectionRule struct {
 	Reviewers         []*EnvironmentReviewer `json:"reviewers,omitempty"`
 }
 
+// EnvironmentBranchPolicy captures branch deployment restrictions for an environment.
 type EnvironmentBranchPolicy struct {
 	ProtectedBranches    bool `json:"protected_branches"`
 	CustomBranchPolicies bool `json:"custom_branch_policies"`
 }
 
+// RepositoryEnvironment captures GitHub environment settings relevant to deployment policy checks.
 type RepositoryEnvironment struct {
 	ID                     int64                        `json:"id"`
 	Name                   string                       `json:"name"`
@@ -98,6 +104,7 @@ type RepositoryEnvironment struct {
 	DeploymentBranchPolicy *EnvironmentBranchPolicy     `json:"deployment_branch_policy,omitempty"`
 }
 
+// BranchRuleEvidence captures effective branch rules for repository policy evaluation.
 type BranchRuleEvidence struct {
 	RequiredSignatures           bool     `json:"required_signatures"`
 	RequiredDeployments          []string `json:"required_deployments,omitempty"`
@@ -107,6 +114,7 @@ type BranchRuleEvidence struct {
 	RequireCodeOwnerReview       bool     `json:"require_code_owner_review,omitempty"`
 }
 
+// RepositoryDependency captures a direct dependency and any collected upstream health facts.
 type RepositoryDependency struct {
 	Name             string                      `json:"name"`
 	Ecosystem        string                      `json:"ecosystem"`
@@ -119,12 +127,14 @@ type RepositoryDependency struct {
 	CollectionStatus *DependencyCollectionStatus `json:"collection_status"`
 }
 
+// DependencyPolicyInput is the policy input shape for dependency-granular evaluation.
 type DependencyPolicyInput struct {
 	Repository *DependencyParentRepository `json:"repository"`
 	Dependency *RepositoryDependency       `json:"dependency"`
 	PolicyData map[string]interface{}      `json:"policy_data"`
 }
 
+// DependencyParentRepository identifies the repository that declared a dependency.
 type DependencyParentRepository struct {
 	Organization string `json:"organization"`
 	Name         string `json:"name"`
@@ -132,6 +142,7 @@ type DependencyParentRepository struct {
 	URL          string `json:"url,omitempty"`
 }
 
+// DependencyRepository identifies the upstream repository resolved for a dependency.
 type DependencyRepository struct {
 	Provider string `json:"provider,omitempty"`
 	Owner    string `json:"owner,omitempty"`
@@ -140,6 +151,7 @@ type DependencyRepository struct {
 	Resolved bool   `json:"resolved"`
 }
 
+// DependencyHealth captures maintenance and activity signals for a resolved dependency repository.
 type DependencyHealth struct {
 	RepositoryArchived bool                        `json:"repository_archived"`
 	LatestRelease      *DependencyRelease          `json:"latest_release,omitempty"`
@@ -148,27 +160,32 @@ type DependencyHealth struct {
 	PullRequests       *DependencyPullRequestStats `json:"pull_requests,omitempty"`
 }
 
+// DependencyRelease captures the latest release observed for a dependency.
 type DependencyRelease struct {
 	Tag         string     `json:"tag,omitempty"`
 	PublishedAt *time.Time `json:"published_at,omitempty"`
 }
 
+// DependencyCommit captures the latest default-branch commit observed for a dependency.
 type DependencyCommit struct {
 	SHA         string     `json:"sha,omitempty"`
 	CommittedAt *time.Time `json:"committed_at,omitempty"`
 }
 
+// DependencyWorkflowSummary summarizes workflow availability for a dependency repository.
 type DependencyWorkflowSummary struct {
 	Count                  int                    `json:"count"`
 	LatestDefaultBranchRun *DependencyWorkflowRun `json:"latest_default_branch_run,omitempty"`
 }
 
+// DependencyWorkflowRun captures the latest default-branch workflow run state.
 type DependencyWorkflowRun struct {
 	Status     string     `json:"status,omitempty"`
 	Conclusion string     `json:"conclusion,omitempty"`
 	CreatedAt  *time.Time `json:"created_at,omitempty"`
 }
 
+// DependencyPullRequestStats summarizes dependency repository pull request activity.
 type DependencyPullRequestStats struct {
 	OpenCount                           int        `json:"open_count"`
 	OpenCountCapped                     bool       `json:"open_count_capped"`
@@ -180,11 +197,13 @@ type DependencyPullRequestStats struct {
 	FirstInteractionSampledPullRequests int        `json:"first_interaction_sampled_pull_requests"`
 }
 
+// DependencySupplyChain captures dependency license and SBOM evidence.
 type DependencySupplyChain struct {
 	License *DependencyLicenseSummary `json:"license,omitempty"`
 	SBOM    *DependencySBOMSummary    `json:"sbom,omitempty"`
 }
 
+// DependencyLicenseSummary captures collected dependency license metadata.
 type DependencyLicenseSummary struct {
 	SPDXID    string `json:"spdx_id,omitempty"`
 	Name      string `json:"name,omitempty"`
@@ -192,6 +211,7 @@ type DependencyLicenseSummary struct {
 	Collected bool   `json:"collected"`
 }
 
+// DependencySBOMSummary captures collected dependency SBOM metadata.
 type DependencySBOMSummary struct {
 	Available           bool       `json:"available"`
 	PackageCount        int        `json:"package_count"`
@@ -201,6 +221,7 @@ type DependencySBOMSummary struct {
 	Collected           bool       `json:"collected"`
 }
 
+// DependencyCollectionStatus records which dependency collection stages completed.
 type DependencyCollectionStatus struct {
 	DependencyParsed   bool                         `json:"dependency_parsed"`
 	RepositoryResolved bool                         `json:"repository_resolved"`
@@ -210,6 +231,7 @@ type DependencyCollectionStatus struct {
 	Errors             []*DependencyCollectionError `json:"errors"`
 }
 
+// DependencyCollectionError records a non-fatal dependency collection failure.
 type DependencyCollectionError struct {
 	Scope   string `json:"scope"`
 	Message string `json:"message"`

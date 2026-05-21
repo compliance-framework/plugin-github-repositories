@@ -6,6 +6,7 @@ import (
 	"github.com/google/go-github/v71/github"
 )
 
+// GatherOrgTeams returns organization teams and their member logins.
 func (l *GithubReposPlugin) GatherOrgTeams(ctx context.Context) ([]*OrgTeam, error) {
 	opts := &github.ListOptions{
 		PerPage: 100,

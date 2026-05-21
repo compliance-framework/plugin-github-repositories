@@ -9,6 +9,7 @@ import (
 
 const maxEnvironmentDetailConcurrency = 5
 
+// GatherRepositoryCollaborators returns direct collaborators and their repository permissions.
 func (l *GithubReposPlugin) GatherRepositoryCollaborators(ctx context.Context, repo *github.Repository) ([]*RepositoryCollaborator, error) {
 	owner := repo.GetOwner().GetLogin()
 	name := repo.GetName()
@@ -48,6 +49,7 @@ func (l *GithubReposPlugin) GatherRepositoryCollaborators(ctx context.Context, r
 	return collaborators, nil
 }
 
+// GatherRepositoryTeams returns teams with repository access and resolves known team members.
 func (l *GithubReposPlugin) GatherRepositoryTeams(ctx context.Context, repo *github.Repository, orgTeams []*OrgTeam) ([]*RepositoryTeam, error) {
 	owner := repo.GetOwner().GetLogin()
 	name := repo.GetName()
@@ -88,6 +90,7 @@ func (l *GithubReposPlugin) GatherRepositoryTeams(ctx context.Context, repo *git
 	return teams, nil
 }
 
+// GatherRepositoryEnvironments returns GitHub environments enriched with protection details.
 func (l *GithubReposPlugin) GatherRepositoryEnvironments(ctx context.Context, repo *github.Repository) ([]*RepositoryEnvironment, error) {
 	owner := repo.GetOwner().GetLogin()
 	name := repo.GetName()
@@ -121,6 +124,7 @@ func (l *GithubReposPlugin) GatherRepositoryEnvironments(ctx context.Context, re
 	return environments, nil
 }
 
+// GatherEffectiveBranchRules returns effective ruleset evidence for protected and default branches.
 func (l *GithubReposPlugin) GatherEffectiveBranchRules(ctx context.Context, repo *github.Repository, branches []string) (map[string]*BranchRuleEvidence, error) {
 	owner := repo.GetOwner().GetLogin()
 	name := repo.GetName()

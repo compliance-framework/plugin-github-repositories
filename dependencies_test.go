@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
+// TestParseGoModDirectDependencies verifies direct go.mod requirements are parsed and indirect ones are ignored.
 func TestParseGoModDirectDependencies(t *testing.T) {
 	content := []byte(`module example.com/app
 
@@ -46,6 +47,7 @@ require (
 	}
 }
 
+// TestResolveGitHubModulePath verifies GitHub module paths resolve to owner and repository names.
 func TestResolveGitHubModulePath(t *testing.T) {
 	owner, repo, ok := resolveGitHubModulePath("github.com/google/go-github/v71")
 	if !ok {
@@ -61,6 +63,7 @@ func TestResolveGitHubModulePath(t *testing.T) {
 	}
 }
 
+// TestDependencyHealthConfigDefaultsAndInvalidValues verifies dependency health config parsing defaults and validation.
 func TestDependencyHealthConfigDefaultsAndInvalidValues(t *testing.T) {
 	cfg := &PluginConfig{}
 	if err := cfg.parseDependencyHealthConfig(); err != nil {
@@ -90,6 +93,7 @@ func TestDependencyHealthConfigDefaultsAndInvalidValues(t *testing.T) {
 	}
 }
 
+// TestConfigureDefaultsPolicyData verifies Configure initializes policy data to an empty map.
 func TestConfigureDefaultsPolicyData(t *testing.T) {
 	plugin := &GithubReposPlugin{Logger: hclog.NewNullLogger()}
 	_, err := plugin.Configure(&proto.ConfigureRequest{
@@ -109,6 +113,7 @@ func TestConfigureDefaultsPolicyData(t *testing.T) {
 	}
 }
 
+// TestConfigureLegacyPolicyInputFallback verifies legacy policy_input config still populates policy data.
 func TestConfigureLegacyPolicyInputFallback(t *testing.T) {
 	plugin := &GithubReposPlugin{Logger: hclog.NewNullLogger()}
 	_, err := plugin.Configure(&proto.ConfigureRequest{
@@ -130,6 +135,7 @@ func TestConfigureLegacyPolicyInputFallback(t *testing.T) {
 	}
 }
 
+// TestConfigurePolicyDataOverridesLegacyPolicyInput verifies request policy_data wins over legacy config.
 func TestConfigurePolicyDataOverridesLegacyPolicyInput(t *testing.T) {
 	plugin := &GithubReposPlugin{Logger: hclog.NewNullLogger()}
 	policyData, err := structpb.NewStruct(map[string]interface{}{
@@ -154,6 +160,7 @@ func TestConfigurePolicyDataOverridesLegacyPolicyInput(t *testing.T) {
 	}
 }
 
+// TestConfigureInvalidLegacyPolicyInputFails verifies invalid legacy policy_input JSON fails configuration.
 func TestConfigureInvalidLegacyPolicyInputFails(t *testing.T) {
 	plugin := &GithubReposPlugin{Logger: hclog.NewNullLogger()}
 	_, err := plugin.Configure(&proto.ConfigureRequest{
@@ -168,6 +175,7 @@ func TestConfigureInvalidLegacyPolicyInputFails(t *testing.T) {
 	}
 }
 
+// TestSaturatedRepositoryPolicyInputAlias verifies policy_input mirrors policy_data for repository policy compatibility.
 func TestSaturatedRepositoryPolicyInputAlias(t *testing.T) {
 	repo := &SaturatedRepository{
 		PolicyData: map[string]interface{}{"source": "policy-data"},
@@ -182,6 +190,7 @@ func TestSaturatedRepositoryPolicyInputAlias(t *testing.T) {
 	}
 }
 
+// TestSaturatedRepositoryPolicyInputAliasMarshalsWhenEmpty verifies empty policy_input aliases are preserved in JSON.
 func TestSaturatedRepositoryPolicyInputAliasMarshalsWhenEmpty(t *testing.T) {
 	repo := &SaturatedRepository{
 		PolicyData:  map[string]interface{}{},
@@ -196,6 +205,7 @@ func TestSaturatedRepositoryPolicyInputAliasMarshalsWhenEmpty(t *testing.T) {
 	}
 }
 
+// TestMedianHelpers verifies median helper functions for dependency pull request metrics.
 func TestMedianHelpers(t *testing.T) {
 	prs := []*github.Issue{
 		{
@@ -219,6 +229,7 @@ func TestMedianHelpers(t *testing.T) {
 	}
 }
 
+// TestRequestWithDefaultPolicyBehaviorClassifiesAllPolicyPaths verifies policy paths are routed to the expected behavior.
 func TestRequestWithDefaultPolicyBehaviorClassifiesAllPolicyPaths(t *testing.T) {
 	req := &proto.EvalRequest{
 		PolicyPaths: []string{
@@ -239,6 +250,7 @@ func TestRequestWithDefaultPolicyBehaviorClassifiesAllPolicyPaths(t *testing.T) 
 	})
 }
 
+// TestGatherRepositoryDependenciesEndToEnd verifies dependency parsing, resolution, and health collection against a fake API.
 func TestGatherRepositoryDependenciesEndToEnd(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
@@ -466,6 +478,7 @@ require (
 	}
 }
 
+// TestGatherRepositoryDependenciesRequiresConfiguration verifies dependency collection fails before plugin configuration.
 func TestGatherRepositoryDependenciesRequiresConfiguration(t *testing.T) {
 	plugin := &GithubReposPlugin{}
 	repo := &github.Repository{
@@ -483,6 +496,7 @@ func TestGatherRepositoryDependenciesRequiresConfiguration(t *testing.T) {
 	}
 }
 
+// TestCollectDependencySBOMTreatsNotFoundAsCollectedUnavailable verifies missing SBOMs are recorded as collected but unavailable.
 func TestCollectDependencySBOMTreatsNotFoundAsCollectedUnavailable(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
@@ -521,6 +535,7 @@ func TestCollectDependencySBOMTreatsNotFoundAsCollectedUnavailable(t *testing.T)
 	}
 }
 
+// TestCollectDependencyRepositoryFactsMarksHealthIncompleteOnHealthError verifies health collection remains incomplete after a health API error.
 func TestCollectDependencyRepositoryFactsMarksHealthIncompleteOnHealthError(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
@@ -570,6 +585,7 @@ func TestCollectDependencyRepositoryFactsMarksHealthIncompleteOnHealthError(t *t
 	}
 }
 
+// TestGatherRepositoryDependenciesMissingGoMod verifies repositories without go.mod return no dependencies.
 func TestGatherRepositoryDependenciesMissingGoMod(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
@@ -594,6 +610,7 @@ func TestGatherRepositoryDependenciesMissingGoMod(t *testing.T) {
 	}
 }
 
+// TestGatherRepositoryDependenciesMissingGoModEmitsCollectionGapForPolicies verifies callback mode emits a dependency collection gap.
 func TestGatherRepositoryDependenciesMissingGoModEmitsCollectionGapForPolicies(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
@@ -638,6 +655,7 @@ func TestGatherRepositoryDependenciesMissingGoModEmitsCollectionGapForPolicies(t
 	}
 }
 
+// TestNewDependencyCollectionGapSerializesEmptyErrors verifies collection-gap dependencies marshal empty error lists.
 func TestNewDependencyCollectionGapSerializesEmptyErrors(t *testing.T) {
 	dep := newDependencyCollectionGap("go_mod_fetch", nil)
 	payload, err := json.Marshal(dep)
@@ -649,6 +667,7 @@ func TestNewDependencyCollectionGapSerializesEmptyErrors(t *testing.T) {
 	}
 }
 
+// TestEvaluatePoliciesRunsDependencyPoliciesPerDependency verifies dependency policies emit evidence per dependency.
 func TestEvaluatePoliciesRunsDependencyPoliciesPerDependency(t *testing.T) {
 	policyDir := filepath.Join(t.TempDir(), "plugin-github-repositories-dependency-policies")
 	if err := os.MkdirAll(policyDir, 0o755); err != nil {
@@ -753,6 +772,7 @@ func evidenceHasHref(evidence *proto.Evidence, href string) bool {
 	return false
 }
 
+// TestDependencyPolicyInputDefaultsPolicyData verifies dependency policy inputs default policy data to an empty map.
 func TestDependencyPolicyInputDefaultsPolicyData(t *testing.T) {
 	repo := &github.Repository{
 		Name:     github.Ptr("api"),
@@ -769,6 +789,7 @@ func TestDependencyPolicyInputDefaultsPolicyData(t *testing.T) {
 	}
 }
 
+// TestMedianHoursToFirstInteractionStopsAfterFirstCollectionError verifies first-interaction collection stops after an API error.
 func TestMedianHoursToFirstInteractionStopsAfterFirstCollectionError(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
@@ -801,6 +822,7 @@ func TestMedianHoursToFirstInteractionStopsAfterFirstCollectionError(t *testing.
 	}
 }
 
+// TestMedianHoursToFirstInteractionSamplesOnlyPullRequestsWithCreatedAt verifies sampling skips PRs without creation times.
 func TestMedianHoursToFirstInteractionSamplesOnlyPullRequestsWithCreatedAt(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
@@ -838,6 +860,7 @@ func TestMedianHoursToFirstInteractionSamplesOnlyPullRequestsWithCreatedAt(t *te
 	}
 }
 
+// TestListPullRequestIssuesFiltersPullRequests verifies issue results are filtered to pull requests.
 func TestListPullRequestIssuesFiltersPullRequests(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
@@ -868,6 +891,7 @@ func TestListPullRequestIssuesFiltersPullRequests(t *testing.T) {
 	}
 }
 
+// TestListPullRequestIssuesSortsOpenPullRequestsOldestFirst verifies open PR issue collection requests oldest-first ordering.
 func TestListPullRequestIssuesSortsOpenPullRequestsOldestFirst(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
@@ -901,6 +925,7 @@ func TestListPullRequestIssuesSortsOpenPullRequestsOldestFirst(t *testing.T) {
 	}
 }
 
+// TestListPullRequestIssuesSortsClosedPullRequestsByRecentUpdate verifies closed PR issue collection requests recent updates.
 func TestListPullRequestIssuesSortsClosedPullRequestsByRecentUpdate(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
@@ -938,6 +963,7 @@ func TestListPullRequestIssuesSortsClosedPullRequestsByRecentUpdate(t *testing.T
 	}
 }
 
+// TestListPullRequestIssuesStopsAtMaxPages verifies pull request issue collection reports capped pagination.
 func TestListPullRequestIssuesStopsAtMaxPages(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
@@ -972,6 +998,7 @@ func TestListPullRequestIssuesStopsAtMaxPages(t *testing.T) {
 	}
 }
 
+// TestFilterPullRequestsClosedSinceUsesClosedAt verifies closed PR filtering uses ClosedAt rather than update time.
 func TestFilterPullRequestsClosedSinceUsesClosedAt(t *testing.T) {
 	since := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
 	prs := []*github.Issue{
