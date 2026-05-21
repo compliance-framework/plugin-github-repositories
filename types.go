@@ -106,3 +106,109 @@ type BranchRuleEvidence struct {
 	DismissStaleReviewsOnPush    bool     `json:"dismiss_stale_reviews_on_push,omitempty"`
 	RequireCodeOwnerReview       bool     `json:"require_code_owner_review,omitempty"`
 }
+
+type RepositoryDependency struct {
+	Name             string                      `json:"name"`
+	Ecosystem        string                      `json:"ecosystem"`
+	SourceFile       string                      `json:"source_file"`
+	Direct           bool                        `json:"direct"`
+	DeclaredVersion  string                      `json:"declared_version"`
+	Repository       *DependencyRepository       `json:"repository"`
+	Health           *DependencyHealth           `json:"health"`
+	SupplyChain      *DependencySupplyChain      `json:"supply_chain"`
+	CollectionStatus *DependencyCollectionStatus `json:"collection_status"`
+}
+
+type DependencyPolicyInput struct {
+	Repository *DependencyParentRepository `json:"repository"`
+	Dependency *RepositoryDependency       `json:"dependency"`
+	PolicyData map[string]interface{}      `json:"policy_data"`
+}
+
+type DependencyParentRepository struct {
+	Organization string `json:"organization"`
+	Name         string `json:"name"`
+	FullName     string `json:"full_name"`
+	URL          string `json:"url,omitempty"`
+}
+
+type DependencyRepository struct {
+	Provider string `json:"provider,omitempty"`
+	Owner    string `json:"owner,omitempty"`
+	Name     string `json:"name,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Resolved bool   `json:"resolved"`
+}
+
+type DependencyHealth struct {
+	RepositoryArchived bool                        `json:"repository_archived"`
+	LatestRelease      *DependencyRelease          `json:"latest_release,omitempty"`
+	LatestCommit       *DependencyCommit           `json:"latest_commit,omitempty"`
+	Workflows          *DependencyWorkflowSummary  `json:"workflows,omitempty"`
+	PullRequests       *DependencyPullRequestStats `json:"pull_requests,omitempty"`
+}
+
+type DependencyRelease struct {
+	Tag         string     `json:"tag,omitempty"`
+	PublishedAt *time.Time `json:"published_at,omitempty"`
+}
+
+type DependencyCommit struct {
+	SHA         string     `json:"sha,omitempty"`
+	CommittedAt *time.Time `json:"committed_at,omitempty"`
+}
+
+type DependencyWorkflowSummary struct {
+	Count                  int                    `json:"count"`
+	LatestDefaultBranchRun *DependencyWorkflowRun `json:"latest_default_branch_run,omitempty"`
+}
+
+type DependencyWorkflowRun struct {
+	Status     string     `json:"status,omitempty"`
+	Conclusion string     `json:"conclusion,omitempty"`
+	CreatedAt  *time.Time `json:"created_at,omitempty"`
+}
+
+type DependencyPullRequestStats struct {
+	OpenCount                           int        `json:"open_count"`
+	OldestOpenCreatedAt                 *time.Time `json:"oldest_open_created_at,omitempty"`
+	RecentClosedCount                   int        `json:"recent_closed_count"`
+	MedianDaysToClose                   *float64   `json:"median_days_to_close,omitempty"`
+	MedianHoursToFirstInteraction       *float64   `json:"median_hours_to_first_interaction,omitempty"`
+	FirstInteractionSampledPullRequests int        `json:"first_interaction_sampled_pull_requests"`
+}
+
+type DependencySupplyChain struct {
+	License *DependencyLicenseSummary `json:"license,omitempty"`
+	SBOM    *DependencySBOMSummary    `json:"sbom,omitempty"`
+}
+
+type DependencyLicenseSummary struct {
+	SPDXID    string `json:"spdx_id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	URL       string `json:"url,omitempty"`
+	Collected bool   `json:"collected"`
+}
+
+type DependencySBOMSummary struct {
+	Available           bool       `json:"available"`
+	PackageCount        int        `json:"package_count"`
+	SPDXID              string     `json:"spdx_id,omitempty"`
+	SPDXVersion         string     `json:"spdx_version,omitempty"`
+	CreationInfoCreated *time.Time `json:"creation_info_created,omitempty"`
+	Collected           bool       `json:"collected"`
+}
+
+type DependencyCollectionStatus struct {
+	DependencyParsed   bool                         `json:"dependency_parsed"`
+	RepositoryResolved bool                         `json:"repository_resolved"`
+	HealthCollected    bool                         `json:"health_collected"`
+	LicenseCollected   bool                         `json:"license_collected"`
+	SBOMCollected      bool                         `json:"sbom_collected"`
+	Errors             []*DependencyCollectionError `json:"errors"`
+}
+
+type DependencyCollectionError struct {
+	Scope   string `json:"scope"`
+	Message string `json:"message"`
+}

@@ -1,0 +1,500 @@
+package main
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/compliance-framework/agent/runner/proto"
+	"github.com/google/go-github/v71/github"
+	"github.com/hashicorp/go-hclog"
+)
+
+func TestParseGoModDirectDependencies(t *testing.T) {
+	content := []byte(`module example.com/app
+
+require github.com/single/line v1.0.0
+
+require (
+	github.com/direct/lib v1.2.3
+	github.com/indirect/lib v0.4.0 // indirect
+)
+`)
+
+	deps, err := parseGoModDirectDependencies(content)
+	if err != nil {
+		t.Fatalf("parseGoModDirectDependencies returned error: %v", err)
+	}
+	if len(deps) != 2 {
+		t.Fatalf("expected 2 direct dependencies, got %d", len(deps))
+	}
+	if deps[0].Name != "github.com/single/line" || deps[0].Version != "v1.0.0" {
+		t.Fatalf("unexpected single-line dependency: %#v", deps[0])
+	}
+	if deps[1].Name != "github.com/direct/lib" || deps[1].Version != "v1.2.3" {
+		t.Fatalf("unexpected block dependency: %#v", deps[1])
+	}
+}
+
+func TestResolveGitHubModulePath(t *testing.T) {
+	owner, repo, ok := resolveGitHubModulePath("github.com/google/go-github/v71")
+	if !ok {
+		t.Fatal("expected GitHub module path to resolve")
+	}
+	if owner != "google" || repo != "go-github" {
+		t.Fatalf("unexpected resolution: %s/%s", owner, repo)
+	}
+
+	_, _, ok = resolveGitHubModulePath("golang.org/x/mod")
+	if ok {
+		t.Fatal("expected non-GitHub module path not to resolve")
+	}
+}
+
+func TestDependencyHealthConfigDefaultsAndInvalidValues(t *testing.T) {
+	cfg := &PluginConfig{}
+	if err := cfg.parseDependencyHealthConfig(); err != nil {
+		t.Fatalf("parseDependencyHealthConfig returned error: %v", err)
+	}
+	if cfg.dependencyHealthEnabled {
+		t.Fatal("dependency health should default to disabled")
+	}
+	if cfg.dependencyHealthMaxDependencies != 50 {
+		t.Fatalf("expected max dependencies default 50, got %d", cfg.dependencyHealthMaxDependencies)
+	}
+	if !cfg.dependencyHealthIncludeUnresolved {
+		t.Fatal("include unresolved should default to true")
+	}
+	if !cfg.dependencyHealthCollectSBOM {
+		t.Fatal("collect SBOM should default to true")
+	}
+
+	cfg = &PluginConfig{DependencyHealthMaxDependencies: "0"}
+	if err := cfg.parseDependencyHealthConfig(); err == nil {
+		t.Fatal("expected invalid max dependencies to fail")
+	}
+
+	cfg = &PluginConfig{DependencyHealthEnabled: "not-bool"}
+	if err := cfg.parseDependencyHealthConfig(); err == nil {
+		t.Fatal("expected invalid bool to fail")
+	}
+}
+
+func TestMedianHelpers(t *testing.T) {
+	prs := []*github.Issue{
+		{
+			CreatedAt: githubTimestamp("2026-01-01T00:00:00Z"),
+			ClosedAt:  githubTimestamp("2026-01-03T00:00:00Z"),
+		},
+		{
+			CreatedAt: githubTimestamp("2026-01-01T00:00:00Z"),
+			ClosedAt:  githubTimestamp("2026-01-05T00:00:00Z"),
+		},
+	}
+	median := medianDaysToClose(prs)
+	if median == nil || *median != 3 {
+		t.Fatalf("expected median close time 3 days, got %v", median)
+	}
+
+	values := []float64{10, 2, 4}
+	got := medianFloat64(values)
+	if got == nil || *got != 4 {
+		t.Fatalf("expected median 4, got %v", got)
+	}
+}
+
+func TestGatherRepositoryDependenciesEndToEnd(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	goMod := `module github.com/source/target
+
+require (
+	github.com/good/lib v1.2.3
+	github.com/good/lib/submodule v1.2.4
+	github.com/quiet/lib v0.9.0
+	example.com/unresolved/lib v0.1.0
+	github.com/indirect/lib v0.4.0 // indirect
+)
+`
+	goodRepoGetCount := 0
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/source/target/contents/go.mod":
+			writeJSON(t, w, map[string]any{
+				"type":     "file",
+				"name":     "go.mod",
+				"path":     "go.mod",
+				"encoding": "base64",
+				"content":  base64.StdEncoding.EncodeToString([]byte(goMod)),
+			})
+		case r.URL.Path == "/repos/good/lib":
+			goodRepoGetCount++
+			writeJSON(t, w, map[string]any{
+				"name":           "lib",
+				"full_name":      "good/lib",
+				"default_branch": "main",
+				"archived":       false,
+			})
+		case r.URL.Path == "/repos/quiet/lib":
+			writeJSON(t, w, map[string]any{
+				"name":           "lib",
+				"full_name":      "quiet/lib",
+				"default_branch": "main",
+				"archived":       true,
+			})
+		case r.URL.Path == "/repos/good/lib/releases/latest":
+			writeJSON(t, w, map[string]any{
+				"tag_name":     "v1.3.0",
+				"published_at": "2026-01-10T00:00:00Z",
+			})
+		case r.URL.Path == "/repos/quiet/lib/releases/latest":
+			http.NotFound(w, r)
+		case r.URL.Path == "/repos/good/lib/commits":
+			writeJSON(t, w, []map[string]any{{
+				"sha": "abc123",
+				"commit": map[string]any{
+					"committer": map[string]any{"date": "2026-02-01T00:00:00Z"},
+				},
+			}})
+		case r.URL.Path == "/repos/quiet/lib/commits":
+			writeJSON(t, w, []map[string]any{})
+		case r.URL.Path == "/repos/good/lib/actions/workflows":
+			writeJSON(t, w, map[string]any{
+				"total_count": 2,
+				"workflows": []map[string]any{
+					{"id": 1, "name": "ci"},
+					{"id": 2, "name": "release"},
+				},
+			})
+		case r.URL.Path == "/repos/quiet/lib/actions/workflows":
+			writeJSON(t, w, map[string]any{"total_count": 0, "workflows": []any{}})
+		case r.URL.Path == "/repos/good/lib/actions/runs":
+			writeJSON(t, w, map[string]any{
+				"total_count": 1,
+				"workflow_runs": []map[string]any{{
+					"id":         1,
+					"status":     "completed",
+					"conclusion": "success",
+					"created_at": "2026-02-02T00:00:00Z",
+				}},
+			})
+		case r.URL.Path == "/repos/quiet/lib/actions/runs":
+			writeJSON(t, w, map[string]any{"total_count": 0, "workflow_runs": []any{}})
+		case r.URL.Path == "/repos/good/lib/license":
+			writeJSON(t, w, map[string]any{
+				"license": map[string]any{
+					"spdx_id": "MIT",
+					"name":    "MIT License",
+					"url":     "https://api.github.com/licenses/mit",
+				},
+			})
+		case r.URL.Path == "/repos/quiet/lib/license":
+			http.NotFound(w, r)
+		case r.URL.Path == "/repos/good/lib/dependency-graph/sbom":
+			writeJSON(t, w, map[string]any{
+				"sbom": map[string]any{
+					"SPDXID":      "SPDXRef-DOCUMENT",
+					"spdxVersion": "SPDX-2.3",
+					"creationInfo": map[string]any{
+						"created": "2026-02-01T00:00:00Z",
+					},
+					"packages": []map[string]any{
+						{"name": "a"},
+						{"name": "b"},
+					},
+				},
+			})
+		case r.URL.Path == "/repos/quiet/lib/dependency-graph/sbom":
+			http.Error(w, "forbidden", http.StatusForbidden)
+		case r.URL.Path == "/repos/good/lib/issues" && r.URL.Query().Get("state") == "open":
+			writeJSON(t, w, []map[string]any{{
+				"number":       3,
+				"created_at":   "2026-01-01T00:00:00Z",
+				"pull_request": map[string]any{"url": "https://api.github.test/repos/good/lib/pulls/3"},
+			}})
+		case r.URL.Path == "/repos/good/lib/issues" && r.URL.Query().Get("state") == "closed":
+			writeJSON(t, w, []map[string]any{{
+				"number":       7,
+				"created_at":   "2026-01-01T00:00:00Z",
+				"closed_at":    "2026-01-05T00:00:00Z",
+				"pull_request": map[string]any{"url": "https://api.github.test/repos/good/lib/pulls/7"},
+			}})
+		case r.URL.Path == "/repos/quiet/lib/issues":
+			writeJSON(t, w, []any{})
+		case r.URL.Path == "/repos/good/lib/issues/7/comments":
+			writeJSON(t, w, []map[string]any{{
+				"id":         10,
+				"created_at": "2026-01-02T00:00:00Z",
+			}})
+		case r.URL.Path == "/repos/good/lib/pulls/7/reviews":
+			writeJSON(t, w, []map[string]any{{
+				"id":           11,
+				"submitted_at": "2026-01-03T00:00:00Z",
+			}})
+		default:
+			t.Fatalf("unexpected GitHub API request: %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+	})
+
+	plugin := newTestPlugin(t, server.URL)
+	repo := &github.Repository{
+		Name:          github.Ptr("target"),
+		DefaultBranch: github.Ptr("main"),
+		Owner:         &github.User{Login: github.Ptr("source")},
+	}
+
+	deps := plugin.GatherRepositoryDependencies(t.Context(), repo)
+	if len(deps) != 4 {
+		t.Fatalf("expected 4 dependencies, got %d", len(deps))
+	}
+
+	good := findDependency(t, deps, "github.com/good/lib")
+	if !good.Repository.Resolved || good.Repository.Owner != "good" || good.Repository.Name != "lib" {
+		t.Fatalf("good dependency did not resolve: %#v", good.Repository)
+	}
+	if good.Health.LatestRelease == nil || good.Health.LatestRelease.Tag != "v1.3.0" {
+		t.Fatalf("latest release not collected: %#v", good.Health.LatestRelease)
+	}
+	if good.Health.LatestCommit == nil || good.Health.LatestCommit.SHA != "abc123" {
+		t.Fatalf("latest commit not collected: %#v", good.Health.LatestCommit)
+	}
+	if good.Health.Workflows == nil || good.Health.Workflows.Count != 2 || good.Health.Workflows.LatestDefaultBranchRun.Conclusion != "success" {
+		t.Fatalf("workflow summary not collected: %#v", good.Health.Workflows)
+	}
+	if good.SupplyChain.License == nil || good.SupplyChain.License.SPDXID != "MIT" {
+		t.Fatalf("license not collected: %#v", good.SupplyChain.License)
+	}
+	if good.SupplyChain.SBOM == nil || !good.SupplyChain.SBOM.Available || good.SupplyChain.SBOM.PackageCount != 2 {
+		t.Fatalf("SBOM not collected: %#v", good.SupplyChain.SBOM)
+	}
+	if good.Health.PullRequests == nil || good.Health.PullRequests.OpenCount != 1 || good.Health.PullRequests.RecentClosedCount != 1 {
+		t.Fatalf("PR stats not collected: %#v", good.Health.PullRequests)
+	}
+	if good.Health.PullRequests.MedianDaysToClose == nil || *good.Health.PullRequests.MedianDaysToClose != 4 {
+		t.Fatalf("expected median days to close 4, got %#v", good.Health.PullRequests.MedianDaysToClose)
+	}
+	if good.Health.PullRequests.MedianHoursToFirstInteraction == nil || *good.Health.PullRequests.MedianHoursToFirstInteraction != 24 {
+		t.Fatalf("expected median hours to first interaction 24, got %#v", good.Health.PullRequests.MedianHoursToFirstInteraction)
+	}
+	goodSubmodule := findDependency(t, deps, "github.com/good/lib/submodule")
+	if goodSubmodule.Health.LatestRelease == nil || goodSubmodule.Health.LatestRelease.Tag != "v1.3.0" {
+		t.Fatalf("expected cached latest release for submodule dependency, got %#v", goodSubmodule.Health.LatestRelease)
+	}
+	if goodRepoGetCount != 1 {
+		t.Fatalf("expected good/lib repository facts to be fetched once, got %d", goodRepoGetCount)
+	}
+
+	quiet := findDependency(t, deps, "github.com/quiet/lib")
+	if !quiet.Health.RepositoryArchived {
+		t.Fatal("expected quiet dependency to be archived")
+	}
+	if quiet.Health.LatestRelease != nil {
+		t.Fatalf("expected no latest release, got %#v", quiet.Health.LatestRelease)
+	}
+	if quiet.SupplyChain.License == nil || !quiet.SupplyChain.License.Collected || quiet.SupplyChain.License.SPDXID != "" {
+		t.Fatalf("expected unknown collected license, got %#v", quiet.SupplyChain.License)
+	}
+	if quiet.CollectionStatus.SBOMCollected {
+		t.Fatal("expected inaccessible SBOM not to be marked collected")
+	}
+	if len(quiet.CollectionStatus.Errors) == 0 {
+		t.Fatal("expected inaccessible SBOM to record a collection error")
+	}
+
+	unresolved := findDependency(t, deps, "example.com/unresolved/lib")
+	if unresolved.Repository.Resolved {
+		t.Fatalf("expected unresolved dependency, got %#v", unresolved.Repository)
+	}
+}
+
+func TestGatherRepositoryDependenciesMissingGoMod(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/source/target/contents/go.mod" {
+			http.NotFound(w, r)
+			return
+		}
+		t.Fatalf("unexpected GitHub API request: %s", r.URL.Path)
+	})
+
+	plugin := newTestPlugin(t, server.URL)
+	repo := &github.Repository{
+		Name:          github.Ptr("target"),
+		DefaultBranch: github.Ptr("main"),
+		Owner:         &github.User{Login: github.Ptr("source")},
+	}
+	deps := plugin.GatherRepositoryDependencies(t.Context(), repo)
+	if len(deps) != 0 {
+		t.Fatalf("expected no dependencies for missing go.mod, got %d", len(deps))
+	}
+}
+
+func TestEvaluatePoliciesRunsDependencyPoliciesPerDependency(t *testing.T) {
+	policyDir := filepath.Join(t.TempDir(), "plugin-github-repositories-dependency-policies")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatalf("failed to create policy dir: %v", err)
+	}
+	rego := []byte(`package compliance_framework.dependency_archived
+
+title := "Dependency is not archived"
+description := "Dependency repositories should not be archived."
+
+violation[{"id": "dependency_repository_archived"}] if {
+	input.dependency.health.repository_archived == true
+}
+`)
+	if err := os.WriteFile(filepath.Join(policyDir, "dependency_archived.rego"), rego, 0o644); err != nil {
+		t.Fatalf("failed to write policy: %v", err)
+	}
+
+	plugin := &GithubReposPlugin{
+		Logger: hclog.NewNullLogger(),
+	}
+	repo := &github.Repository{
+		Name:     github.Ptr("api"),
+		FullName: github.Ptr("ccf/api"),
+		HTMLURL:  github.Ptr("https://github.com/ccf/api"),
+		Owner:    &github.User{Login: github.Ptr("ccf"), Name: github.Ptr("Continuous Compliance Framework")},
+	}
+	data := &SaturatedRepository{
+		Settings:   repo,
+		PolicyData: map[string]interface{}{"dependency_health": map[string]interface{}{"example": true}},
+	}
+	deps := []*RepositoryDependency{
+		{
+			Name:            "internally-maintained-open-source/foo",
+			Ecosystem:       "go",
+			DeclaredVersion: "v1.0.0",
+			Repository:      &DependencyRepository{URL: "https://github.com/internally-maintained-open-source/foo"},
+			Health:          &DependencyHealth{RepositoryArchived: false},
+		},
+		{
+			Name:            "competitor-maintained-open-source/bar",
+			Ecosystem:       "go",
+			DeclaredVersion: "v2.0.0",
+			Repository:      &DependencyRepository{URL: "https://github.com/competitor-maintained-open-source/bar"},
+			Health:          &DependencyHealth{RepositoryArchived: true},
+		},
+	}
+
+	evidence, err := plugin.EvaluatePolicies(t.Context(), data, deps, []string{policyDir}, nil)
+	if err != nil {
+		t.Fatalf("EvaluatePolicies returned error: %v", err)
+	}
+	if len(evidence) != 2 {
+		t.Fatalf("expected one evidence per dependency, got %d", len(evidence))
+	}
+
+	byDependency := map[string]*proto.Evidence{}
+	for _, ev := range evidence {
+		byDependency[ev.Labels["dependency"]] = ev
+		if ev.Labels["type"] != "repository-dependency" {
+			t.Fatalf("expected dependency evidence type label, got %q", ev.Labels["type"])
+		}
+	}
+
+	foo := byDependency["internally-maintained-open-source/foo"]
+	if foo == nil {
+		t.Fatal("missing evidence for foo dependency")
+	}
+	if foo.Status.GetState() != proto.EvidenceStatusState_EVIDENCE_STATUS_STATE_SATISFIED {
+		t.Fatalf("expected foo evidence to pass, got %s", foo.Status.GetState())
+	}
+	if len(foo.Subjects) == 0 || !strings.Contains(foo.Subjects[0].Identifier, "internally-maintained-open-source/foo@v1.0.0") {
+		t.Fatalf("expected foo dependency subject, got %#v", foo.Subjects)
+	}
+	if !evidenceHasHref(foo, "https://github.com/internally-maintained-open-source/foo") {
+		t.Fatalf("expected foo evidence to link to dependency repository, got %#v", foo.Links)
+	}
+
+	bar := byDependency["competitor-maintained-open-source/bar"]
+	if bar == nil {
+		t.Fatal("missing evidence for bar dependency")
+	}
+	if bar.Status.GetState() != proto.EvidenceStatusState_EVIDENCE_STATUS_STATE_NOT_SATISFIED {
+		t.Fatalf("expected bar evidence to fail, got %s", bar.Status.GetState())
+	}
+	if len(bar.Props) != 1 || bar.Props[0].Value != "dependency_repository_archived" {
+		t.Fatalf("expected archived violation prop, got %#v", bar.Props)
+	}
+	if !evidenceHasHref(bar, "https://github.com/competitor-maintained-open-source/bar") {
+		t.Fatalf("expected bar evidence to link to dependency repository, got %#v", bar.Links)
+	}
+}
+
+func evidenceHasHref(evidence *proto.Evidence, href string) bool {
+	for _, link := range evidence.GetLinks() {
+		if link.GetHref() == href {
+			return true
+		}
+	}
+	return false
+}
+
+func newTestPlugin(t *testing.T, serverURL string) *GithubReposPlugin {
+	t.Helper()
+	client := github.NewClient(http.DefaultClient)
+	baseURL, err := url.Parse(serverURL + "/")
+	if err != nil {
+		t.Fatalf("failed to parse test server URL: %v", err)
+	}
+	client.BaseURL = baseURL
+	return &GithubReposPlugin{
+		Logger:       hclog.NewNullLogger(),
+		githubClient: client,
+		config: &PluginConfig{
+			dependencyHealthEnabled:                 true,
+			dependencyHealthMaxDependencies:         50,
+			dependencyHealthClosedPRLookbackDays:    180,
+			dependencyHealthIncludeUnresolved:       true,
+			dependencyHealthCollectSBOM:             true,
+			dependencyHealthPRInteractionSampleSize: 20,
+		},
+	}
+}
+
+func writeJSON(t *testing.T, w http.ResponseWriter, value any) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(value); err != nil {
+		t.Fatalf("failed to write JSON: %v", err)
+	}
+}
+
+func findDependency(t *testing.T, deps []*RepositoryDependency, name string) *RepositoryDependency {
+	t.Helper()
+	for _, dep := range deps {
+		if dep.Name == name {
+			return dep
+		}
+	}
+	t.Fatalf("dependency %q not found; got %s", name, dependencyNames(deps))
+	return nil
+}
+
+func dependencyNames(deps []*RepositoryDependency) string {
+	names := make([]string, 0, len(deps))
+	for _, dep := range deps {
+		names = append(names, dep.Name)
+	}
+	return strings.Join(names, ", ")
+}
+
+func githubTimestamp(value string) *github.Timestamp {
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		panic(err)
+	}
+	return &github.Timestamp{Time: parsed}
+}

@@ -5,6 +5,7 @@ Fetches information regarding the repository, including
 - Repository metadata and settings
 - Configured workflows
 - Recent workflow runs
+- Optional direct Go dependency health and supply-chain visibility facts
 
 This plugin is intended to be run as part of an aggregate agent, and will execute the policy suite for each repository.
 
@@ -14,10 +15,13 @@ To authenticate this plugin, you must provide a token which has at minimum the f
 
 - Actions (read-only) - Used to pull workflow jobs and success
 - Administration (read-only) - Used to check configuration and rulesets for a repository
+- Contents (read-only) - Used to read repository files such as `go.mod` when dependency health collection is enabled
 - Metadata (read-only) - Required by GitHub
 - Pull Requests (read-only) - Used to pull PRs and status
 - Secret scanning alerts (read-only) - Used to check if secrets have been found
 - Secret scanning push protection bypass requests (read-only) - Used to check the process of any bypass requests
+
+When dependency health collection is enabled, the token also uses repository contents, Actions, pull request, license, and dependency graph/SBOM APIs against resolved public GitHub dependency repositories. Missing permissions or unavailable upstream data are recorded as dependency-level collection gaps and do not fail the repository evaluation.
 
 ## Configuration
 
@@ -32,7 +36,17 @@ plugins:
     # Alternatively, these can be limited via the PAT configuration
     included_repositories: foo,bar,baz
     excluded_repositories: quix,quiz
+    # Optional dependency health collection. Disabled by default to avoid extra GitHub API usage.
+    dependency_health_enabled: "false"
+    dependency_health_max_dependencies: "50"
+    dependency_health_closed_pr_lookback_days: "180"
+    dependency_health_include_unresolved: "true"
+    dependency_health_collect_sbom: "true"
+    dependency_health_pr_interaction_sample_size: "20"
 ```
+
+Dependency health collection currently parses direct `go.mod` dependencies only. It resolves module paths that start with `github.com/{owner}/{repo}` and collects public upstream repository health signals.
+Dependency policies are now evaluated using policy behavior metadata from the request (`dependency` behavior), and dependency inputs expose repository/dependency context under `input.dependency` and `input.repository` with request policy data available at `input.policy_data`. This can add several GitHub API calls per direct dependency, so enable it only for policy collections that need dependency evidence.
 
 ## Integration testing
 
