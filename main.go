@@ -507,16 +507,15 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 			}
 
 			l.Logger.Debug("Collecting repository dependencies", "repo", repo.GetFullName())
+			dependencyEvidences := []*proto.Evidence{}
 			dependencies, err := l.gatherRepositoryDependencies(ctx, repo, func(dependency *RepositoryDependency) error {
 				evidences, err := l.EvaluatePolicies(ctx, data, []*RepositoryDependency{dependency}, dependencyPolicyPaths, l.config.policyData)
 				if err != nil {
 					return err
 				}
-				if err := apiHelper.CreateEvidence(ctx, evidences); err != nil {
-					return err
-				}
+				dependencyEvidences = append(dependencyEvidences, evidences...)
 				l.Logger.Debug(
-					"Submitted dependency evidence",
+					"Evaluated dependency evidence",
 					"repo", repo.GetFullName(),
 					"dependency", dependency.Name,
 					"evidence_count", len(evidences),
@@ -529,6 +528,15 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 					Status: proto.ExecutionStatus_FAILURE,
 				}, err
 			}
+			if len(dependencyEvidences) > 0 {
+				if err := apiHelper.CreateEvidence(ctx, dependencyEvidences); err != nil {
+					l.Logger.Error("Error creating dependency evidence", "error", err)
+					return &proto.EvalResponse{
+						Status: proto.ExecutionStatus_FAILURE,
+					}, err
+				}
+			}
+			l.Logger.Debug("Submitted dependency evidence", "repo", repo.GetFullName(), "evidence_count", len(dependencyEvidences))
 			l.Logger.Debug("Repository dependency collection complete", "repo", repo.GetFullName(), "dependencies", len(dependencies))
 			if len(dependencies) == 0 {
 				l.Logger.Warn(

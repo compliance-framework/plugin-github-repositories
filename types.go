@@ -171,8 +171,10 @@ type DependencyWorkflowRun struct {
 
 type DependencyPullRequestStats struct {
 	OpenCount                           int        `json:"open_count"`
+	OpenCountCapped                     bool       `json:"open_count_capped"`
 	OldestOpenCreatedAt                 *time.Time `json:"oldest_open_created_at,omitempty"`
 	RecentClosedCount                   int        `json:"recent_closed_count"`
+	RecentClosedCountCapped             bool       `json:"recent_closed_count_capped"`
 	MedianDaysToClose                   *float64   `json:"median_days_to_close,omitempty"`
 	MedianHoursToFirstInteraction       *float64   `json:"median_hours_to_first_interaction,omitempty"`
 	FirstInteractionSampledPullRequests int        `json:"first_interaction_sampled_pull_requests"`

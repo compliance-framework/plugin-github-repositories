@@ -37,12 +37,12 @@ plugins:
     included_repositories: foo,bar,baz
     excluded_repositories: quix,quiz
     # Optional dependency health collection. Disabled by default to avoid extra GitHub API usage.
-    dependency_health_enabled: "false"
-    dependency_health_max_dependencies: "50"
-    dependency_health_closed_pr_lookback_days: "180"
-    dependency_health_include_unresolved: "true"
-    dependency_health_collect_sbom: "true"
-    dependency_health_pr_interaction_sample_size: "20"
+    dependency_health_enabled: false
+    dependency_health_max_dependencies: 50
+    dependency_health_closed_pr_lookback_days: 180
+    dependency_health_include_unresolved: true
+    dependency_health_collect_sbom: true
+    dependency_health_pr_interaction_sample_size: 20
 ```
 
 Dependency health collection currently parses direct `go.mod` dependencies only. It resolves module paths that start with `github.com/{owner}/{repo}` and collects public upstream repository health signals.

@@ -574,7 +574,7 @@ Suggested behavior:
 Suggested title:
 
 ```rego
-title := "Direct dependency has stale upstream activity"
+title := "Direct dependency shows no recent upstream activity"
 ```
 
 Suggested description:
@@ -1034,15 +1034,15 @@ Each dependency should be referenced in evidence details.
 Recommended dependency identifier:
 
 ```text
-dependency/go/github.com/example/lib
+github-repository-dependency/github.com/example/lib@v1.2.3
 ```
 
-The first implementation can keep dependencies nested under repository evaluation data. However, identifiers should be stable enough that dependencies can become first-class inventory items later.
+The first implementation can keep dependencies nested under repository evaluation data. These stable identifiers can be promoted to first-class inventory items later.
 
 Future inventory item example:
 
 ```text
-dependency/go/github.com/example/lib@v1.2.3
+github-repository-dependency/github.com/example/lib@v1.2.3
 ```
 
 This allows future evidence relationships such as:

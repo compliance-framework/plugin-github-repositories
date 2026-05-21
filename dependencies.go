@@ -405,7 +405,7 @@ func (l *GithubReposPlugin) collectDependencyWorkflows(ctx context.Context, dep 
 	}
 	summary := &DependencyWorkflowSummary{}
 	if workflows != nil {
-		summary.Count = len(workflows.Workflows)
+		summary.Count = workflows.GetTotalCount()
 	}
 
 	runs, _, err := l.githubClient.Actions.ListRepositoryWorkflowRuns(ctx, dep.Repository.Owner, dep.Repository.Name, &github.ListWorkflowRunsOptions{
@@ -475,13 +475,14 @@ func (l *GithubReposPlugin) collectDependencySBOM(ctx context.Context, dep *Repo
 func (l *GithubReposPlugin) collectDependencyPullRequests(ctx context.Context, dep *RepositoryDependency) {
 	stats := &DependencyPullRequestStats{}
 
-	openPRs, err := l.listPullRequestIssues(ctx, dep.Repository.Owner, dep.Repository.Name, "open", time.Time{})
+	openPRs, openCapped, err := l.listPullRequestIssues(ctx, dep.Repository.Owner, dep.Repository.Name, "open", time.Time{})
 	if err != nil {
 		l.recordDependencyCollectionError(dep, "pull_requests_open", err)
 		dep.Health.PullRequests = stats
 		return
 	}
 	stats.OpenCount = len(openPRs)
+	stats.OpenCountCapped = openCapped
 	for _, pr := range openPRs {
 		created := githubTimestampTime(pr.CreatedAt)
 		if created == nil {
@@ -493,7 +494,7 @@ func (l *GithubReposPlugin) collectDependencyPullRequests(ctx context.Context, d
 	}
 
 	since := time.Now().AddDate(0, 0, -l.config.dependencyHealthClosedPRLookbackDays)
-	closedPRs, err := l.listPullRequestIssues(ctx, dep.Repository.Owner, dep.Repository.Name, "closed", since)
+	closedPRs, closedCapped, err := l.listPullRequestIssues(ctx, dep.Repository.Owner, dep.Repository.Name, "closed", since)
 	if err != nil {
 		l.recordDependencyCollectionError(dep, "pull_requests_closed", err)
 		dep.Health.PullRequests = stats
@@ -501,12 +502,13 @@ func (l *GithubReposPlugin) collectDependencyPullRequests(ctx context.Context, d
 	}
 	closedPRs = filterPullRequestsClosedSince(closedPRs, since)
 	stats.RecentClosedCount = len(closedPRs)
+	stats.RecentClosedCountCapped = closedCapped
 	stats.MedianDaysToClose = medianDaysToClose(closedPRs)
 	dep.Health.PullRequests = stats
 	stats.MedianHoursToFirstInteraction = l.medianHoursToFirstInteraction(ctx, dep, closedPRs)
 }
 
-func (l *GithubReposPlugin) listPullRequestIssues(ctx context.Context, owner, repo, state string, since time.Time) ([]*github.Issue, error) {
+func (l *GithubReposPlugin) listPullRequestIssues(ctx context.Context, owner, repo, state string, since time.Time) ([]*github.Issue, bool, error) {
 	opts := &github.IssueListByRepoOptions{
 		State:       state,
 		ListOptions: github.ListOptions{PerPage: dependencyPRPageSize, Page: 1},
@@ -519,7 +521,7 @@ func (l *GithubReposPlugin) listPullRequestIssues(ctx context.Context, owner, re
 	for pages := 0; pages < dependencyPRMaxPages; pages++ {
 		issues, resp, err := l.githubClient.Issues.ListByRepo(ctx, owner, repo, opts)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		for _, issue := range issues {
 			if issue == nil || !issue.IsPullRequest() {
@@ -528,11 +530,11 @@ func (l *GithubReposPlugin) listPullRequestIssues(ctx context.Context, owner, re
 			prs = append(prs, issue)
 		}
 		if resp == nil || resp.NextPage == 0 {
-			break
+			return prs, false, nil
 		}
 		opts.Page = resp.NextPage
 	}
-	return prs, nil
+	return prs, true, nil
 }
 
 func filterPullRequestsClosedSince(prs []*github.Issue, since time.Time) []*github.Issue {
@@ -589,7 +591,7 @@ func (l *GithubReposPlugin) medianHoursToFirstInteraction(ctx context.Context, d
 		values = append(values, first.Sub(*created).Hours())
 	}
 	if dep.Health.PullRequests != nil {
-		dep.Health.PullRequests.FirstInteractionSampledPullRequests = limit
+		dep.Health.PullRequests.FirstInteractionSampledPullRequests = len(values)
 	}
 	return medianFloat64(values)
 }

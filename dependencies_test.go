@@ -210,7 +210,7 @@ require (
 			writeJSON(t, w, []map[string]any{})
 		case r.URL.Path == "/repos/good/lib/actions/workflows":
 			writeJSON(t, w, map[string]any{
-				"total_count": 2,
+				"total_count": 3,
 				"workflows": []map[string]any{
 					{"id": 1, "name": "ci"},
 					{"id": 2, "name": "release"},
@@ -263,12 +263,20 @@ require (
 				"pull_request": map[string]any{"url": "https://api.github.test/repos/good/lib/pulls/3"},
 			}})
 		case r.URL.Path == "/repos/good/lib/issues" && r.URL.Query().Get("state") == "closed":
-			writeJSON(t, w, []map[string]any{{
-				"number":       7,
-				"created_at":   "2026-01-01T00:00:00Z",
-				"closed_at":    "2026-01-05T00:00:00Z",
-				"pull_request": map[string]any{"url": "https://api.github.test/repos/good/lib/pulls/7"},
-			}})
+			writeJSON(t, w, []map[string]any{
+				{
+					"number":       7,
+					"created_at":   "2026-01-01T00:00:00Z",
+					"closed_at":    "2026-01-05T00:00:00Z",
+					"pull_request": map[string]any{"url": "https://api.github.test/repos/good/lib/pulls/7"},
+				},
+				{
+					"number":       8,
+					"created_at":   "2026-01-01T00:00:00Z",
+					"closed_at":    "2026-01-10T00:00:00Z",
+					"pull_request": map[string]any{"url": "https://api.github.test/repos/good/lib/pulls/8"},
+				},
+			})
 		case r.URL.Path == "/repos/quiet/lib/issues":
 			writeJSON(t, w, []any{})
 		case r.URL.Path == "/repos/good/lib/issues/7/comments":
@@ -281,6 +289,10 @@ require (
 				"id":           11,
 				"submitted_at": "2026-01-03T00:00:00Z",
 			}})
+		case r.URL.Path == "/repos/good/lib/issues/8/comments":
+			writeJSON(t, w, []any{})
+		case r.URL.Path == "/repos/good/lib/pulls/8/reviews":
+			writeJSON(t, w, []any{})
 		default:
 			t.Fatalf("unexpected GitHub API request: %s?%s", r.URL.Path, r.URL.RawQuery)
 		}
@@ -308,7 +320,7 @@ require (
 	if good.Health.LatestCommit == nil || good.Health.LatestCommit.SHA != "abc123" {
 		t.Fatalf("latest commit not collected: %#v", good.Health.LatestCommit)
 	}
-	if good.Health.Workflows == nil || good.Health.Workflows.Count != 2 || good.Health.Workflows.LatestDefaultBranchRun.Conclusion != "success" {
+	if good.Health.Workflows == nil || good.Health.Workflows.Count != 3 || good.Health.Workflows.LatestDefaultBranchRun.Conclusion != "success" {
 		t.Fatalf("workflow summary not collected: %#v", good.Health.Workflows)
 	}
 	if good.SupplyChain.License == nil || good.SupplyChain.License.SPDXID != "MIT" {
@@ -317,14 +329,17 @@ require (
 	if good.SupplyChain.SBOM == nil || !good.SupplyChain.SBOM.Available || good.SupplyChain.SBOM.PackageCount != 2 {
 		t.Fatalf("SBOM not collected: %#v", good.SupplyChain.SBOM)
 	}
-	if good.Health.PullRequests == nil || good.Health.PullRequests.OpenCount != 1 || good.Health.PullRequests.RecentClosedCount != 1 {
+	if good.Health.PullRequests == nil || good.Health.PullRequests.OpenCount != 1 || good.Health.PullRequests.OpenCountCapped || good.Health.PullRequests.RecentClosedCount != 2 || good.Health.PullRequests.RecentClosedCountCapped {
 		t.Fatalf("PR stats not collected: %#v", good.Health.PullRequests)
 	}
-	if good.Health.PullRequests.MedianDaysToClose == nil || *good.Health.PullRequests.MedianDaysToClose != 4 {
-		t.Fatalf("expected median days to close 4, got %#v", good.Health.PullRequests.MedianDaysToClose)
+	if good.Health.PullRequests.MedianDaysToClose == nil || *good.Health.PullRequests.MedianDaysToClose != 6.5 {
+		t.Fatalf("expected median days to close 6.5, got %#v", good.Health.PullRequests.MedianDaysToClose)
 	}
 	if good.Health.PullRequests.MedianHoursToFirstInteraction == nil || *good.Health.PullRequests.MedianHoursToFirstInteraction != 24 {
 		t.Fatalf("expected median hours to first interaction 24, got %#v", good.Health.PullRequests.MedianHoursToFirstInteraction)
+	}
+	if good.Health.PullRequests.FirstInteractionSampledPullRequests != 1 {
+		t.Fatalf("expected one successful first-interaction sample, got %d", good.Health.PullRequests.FirstInteractionSampledPullRequests)
 	}
 	goodSubmodule := findDependency(t, deps, "github.com/good/lib/submodule")
 	if goodSubmodule.Health.LatestRelease == nil || goodSubmodule.Health.LatestRelease.Tag != "v1.3.0" {
@@ -526,9 +541,12 @@ func TestListPullRequestIssuesPaginatesAndFiltersPullRequests(t *testing.T) {
 	})
 
 	plugin := newTestPlugin(t, server.URL)
-	prs, err := plugin.listPullRequestIssues(t.Context(), "good", "lib", "closed", time.Time{})
+	prs, capped, err := plugin.listPullRequestIssues(t.Context(), "good", "lib", "closed", time.Time{})
 	if err != nil {
 		t.Fatalf("listPullRequestIssues returned error: %v", err)
+	}
+	if capped {
+		t.Fatal("expected uncapped pull request issue result")
 	}
 	if len(prs) != 2 {
 		t.Fatalf("expected 2 pull request issues, got %d", len(prs))
@@ -557,9 +575,12 @@ func TestListPullRequestIssuesStopsAtMaxPages(t *testing.T) {
 	})
 
 	plugin := newTestPlugin(t, server.URL)
-	prs, err := plugin.listPullRequestIssues(t.Context(), "good", "lib", "closed", time.Time{})
+	prs, capped, err := plugin.listPullRequestIssues(t.Context(), "good", "lib", "closed", time.Time{})
 	if err != nil {
 		t.Fatalf("listPullRequestIssues returned error: %v", err)
+	}
+	if !capped {
+		t.Fatal("expected capped pull request issue result")
 	}
 	if requests != dependencyPRMaxPages {
 		t.Fatalf("expected %d requests, got %d", dependencyPRMaxPages, requests)
