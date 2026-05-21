@@ -21,7 +21,7 @@ To authenticate this plugin, you must provide a token which has at minimum the f
 - Secret scanning alerts (read-only) - Used to check if secrets have been found
 - Secret scanning push protection bypass requests (read-only) - Used to check the process of any bypass requests
 
-When dependency health collection is enabled, the token also uses repository contents, Actions, pull request, license, and dependency graph/SBOM APIs against resolved public GitHub dependency repositories. Missing permissions or unavailable upstream data for resolved dependency repositories are recorded as dependency-level collection gaps and do not fail the repository evaluation.
+When dependency health collection is enabled, the token also uses repository contents, Actions, pull requests, license, and dependency graph/SBOM APIs against resolved public GitHub dependency repositories. Missing permissions or unavailable upstream data for resolved dependency repositories are recorded as dependency-level collection gaps and do not fail the repository evaluation.
 
 ## Configuration
 

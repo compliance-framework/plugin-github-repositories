@@ -944,6 +944,19 @@ func (l *GithubReposPlugin) GatherOpenPullRequests(ctx context.Context, repo *gi
 }
 
 func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *SaturatedRepository, dependencies []*RepositoryDependency, policyPaths []string, dependencyPolicyData map[string]interface{}) ([]*proto.Evidence, error) {
+	if data == nil {
+		return nil, errors.New("cannot evaluate policies without repository data")
+	}
+	if data.PolicyInput == nil {
+		data.PolicyInput = data.PolicyData
+	}
+	if data.Settings == nil {
+		if len(policyPaths) == 0 && len(dependencies) == 0 {
+			return nil, nil
+		}
+		return nil, errors.New("cannot evaluate policies without repository settings")
+	}
+
 	var accumulatedErrors error
 
 	activities := make([]*proto.Activity, 0)
@@ -1069,9 +1082,6 @@ func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *Saturate
 	)
 
 	if len(dependencies) == 0 {
-		if data.PolicyInput == nil {
-			data.PolicyInput = data.PolicyData
-		}
 		for _, policyPath := range policyPaths {
 			l.Logger.Debug("Evaluating repository policy path", "repo", data.Settings.GetFullName(), "policy_path", policyPath)
 			l.Logger.Debug(
