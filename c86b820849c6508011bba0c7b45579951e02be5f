@@ -1,0 +1,4 @@
+lisa-addressed:
+---
+Comment (dependencies.go:571):
+`listPullRequestIssues` caps closed PR collection to `dependencyPRMaxPages`, but for `state == "closed"` it leaves the GitHub Issues API sort/direction at defaults (created desc). With `Since` set, this can exclude many recently-closed PRs (and skew median/interaction metrics) because the returned page isn’t guaranteed to be the most recently updated/closed items. Set `opts.Sort`/`opts.Direction` for closed PRs (e.g., sort by `updated` descending) so the capped page represents the most recent activity within the lookback window.
