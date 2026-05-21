@@ -265,21 +265,6 @@ func (l *GithubReposPlugin) Init(req *proto.InitRequest, apiHelper runner.ApiHel
 				{Key: "organization", Description: "The GitHub organization owning the repository"},
 			},
 		},
-		// {
-		// 	Name:                "github-repository-dependency",
-		// 	Type:                proto.SubjectType_SUBJECT_TYPE_COMPONENT,
-		// 	TitleTemplate:       "GitHub Repository Dependency: {{ .dependency }}",
-		// 	DescriptionTemplate: "Dependency {{ .dependency }} declared by GitHub repository {{ .repository }} in organization {{ .organization }}",
-		// 	PurposeTemplate:     "Represents a direct software dependency declared by a monitored GitHub repository",
-		// 	IdentityLabelKeys:   []string{"repository", "organization", "dependency", "ecosystem"},
-		// 	SelectorLabels:      []*proto.SubjectLabelSelector{},
-		// 	LabelSchema: []*proto.SubjectLabelSchema{
-		// 		{Key: "repository", Description: "The name of the GitHub repository declaring the dependency"},
-		// 		{Key: "organization", Description: "The GitHub organization owning the repository"},
-		// 		{Key: "dependency", Description: "The declared dependency name"},
-		// 		{Key: "ecosystem", Description: "The dependency ecosystem"},
-		// 	},
-		// },
 	}
 
 	return runner.InitWithSubjectsAndRisksFromPolicies(ctx, l.Logger, req, apiHelper, subjectTemplates)

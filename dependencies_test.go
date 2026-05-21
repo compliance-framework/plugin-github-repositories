@@ -490,6 +490,9 @@ func TestGatherRepositoryDependenciesMissingGoModEmitsCollectionGapForPolicies(t
 	if len(dep.CollectionStatus.Errors) != 1 || dep.CollectionStatus.Errors[0].Scope != "go_mod_fetch" {
 		t.Fatalf("expected one go_mod_fetch collection error, got %#v", dep.CollectionStatus.Errors)
 	}
+	if !strings.Contains(dep.CollectionStatus.Errors[0].Message, "404") {
+		t.Fatalf("expected go_mod_fetch collection error to preserve GitHub status, got %q", dep.CollectionStatus.Errors[0].Message)
+	}
 }
 
 func TestEvaluatePoliciesRunsDependencyPoliciesPerDependency(t *testing.T) {
@@ -644,6 +647,43 @@ func TestMedianHoursToFirstInteractionStopsAfterFirstCollectionError(t *testing.
 	}
 }
 
+func TestMedianHoursToFirstInteractionSamplesOnlyPullRequestsWithCreatedAt(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	requests := 0
+	mux.HandleFunc("/repos/good/lib/issues/2/comments", func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		writeJSON(t, w, []map[string]any{{
+			"created_at": "2026-01-03T00:00:00Z",
+		}})
+	})
+	mux.HandleFunc("/repos/good/lib/pulls/2/reviews", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, []map[string]any{})
+	})
+
+	plugin := newTestPlugin(t, server.URL)
+	dep := newRepositoryDependency(goModuleDependency{Name: "github.com/good/lib", Version: "v1.0.0", Direct: true})
+	resolveDependencyRepository(dep)
+	dep.Health.PullRequests = &DependencyPullRequestStats{}
+	prs := []*github.Issue{
+		{Number: github.Ptr(1)},
+		{Number: github.Ptr(2), CreatedAt: githubTimestamp("2026-01-02T00:00:00Z")},
+	}
+
+	median := plugin.medianHoursToFirstInteraction(t.Context(), dep, prs)
+
+	if median == nil || *median != 24 {
+		t.Fatalf("expected median first interaction to use valid PR, got %#v", median)
+	}
+	if requests != 1 {
+		t.Fatalf("expected one first interaction request, got %d", requests)
+	}
+	if dep.Health.PullRequests.FirstInteractionSampledPullRequests != 1 {
+		t.Fatalf("expected one sampled pull request, got %d", dep.Health.PullRequests.FirstInteractionSampledPullRequests)
+	}
+}
+
 func TestListPullRequestIssuesFiltersPullRequests(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
@@ -671,6 +711,39 @@ func TestListPullRequestIssuesFiltersPullRequests(t *testing.T) {
 	}
 	if prs[0].GetNumber() != 1 {
 		t.Fatalf("unexpected pull request issue number: %d", prs[0].GetNumber())
+	}
+}
+
+func TestListPullRequestIssuesSortsOpenPullRequestsOldestFirst(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	mux.HandleFunc("/repos/good/lib/issues", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("state") != "open" {
+			t.Fatalf("unexpected state: %s", r.URL.Query().Get("state"))
+		}
+		if r.URL.Query().Get("sort") != "created" {
+			t.Fatalf("unexpected sort: %s", r.URL.Query().Get("sort"))
+		}
+		if r.URL.Query().Get("direction") != "asc" {
+			t.Fatalf("unexpected direction: %s", r.URL.Query().Get("direction"))
+		}
+		writeJSON(t, w, []map[string]any{{
+			"number":       1,
+			"pull_request": map[string]any{"url": "https://api.github.test/repos/good/lib/pulls/1"},
+		}})
+	})
+
+	plugin := newTestPlugin(t, server.URL)
+	prs, capped, err := plugin.listPullRequestIssues(t.Context(), "good", "lib", "open", time.Time{})
+	if err != nil {
+		t.Fatalf("listPullRequestIssues returned error: %v", err)
+	}
+	if capped {
+		t.Fatal("expected uncapped pull request issue result")
+	}
+	if len(prs) != 1 {
+		t.Fatalf("expected 1 pull request issue, got %d", len(prs))
 	}
 }
 

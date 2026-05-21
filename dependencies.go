@@ -283,7 +283,7 @@ func (l *GithubReposPlugin) fetchGoMod(ctx context.Context, repo *github.Reposit
 	)
 	if err != nil {
 		if isPermissionError(err) {
-			return "", nil
+			return "", err
 		}
 		return "", err
 	}
@@ -554,6 +554,10 @@ func (l *GithubReposPlugin) listPullRequestIssues(ctx context.Context, owner, re
 		State:       state,
 		ListOptions: github.ListOptions{PerPage: dependencyPRPageSize, Page: 1},
 	}
+	if state == "open" {
+		opts.Sort = "created"
+		opts.Direction = "asc"
+	}
 	if !since.IsZero() {
 		opts.Since = since
 	}
@@ -618,11 +622,11 @@ func (l *GithubReposPlugin) medianHoursToFirstInteraction(ctx context.Context, d
 		if pr == nil {
 			continue
 		}
-		sampled++
 		created := githubTimestampTime(pr.CreatedAt)
 		if created == nil {
 			continue
 		}
+		sampled++
 		first, err := l.firstPullRequestInteraction(ctx, dep.Repository.Owner, dep.Repository.Name, pr.GetNumber(), *created)
 		if err != nil {
 			l.recordDependencyCollectionError(dep, "pull_request_interactions", err)
