@@ -341,6 +341,9 @@ require (
 	if good.Health.PullRequests.FirstInteractionSampledPullRequests != 1 {
 		t.Fatalf("expected one successful first-interaction sample, got %d", good.Health.PullRequests.FirstInteractionSampledPullRequests)
 	}
+	if !good.CollectionStatus.HealthCollected {
+		t.Fatal("expected complete health collection to be marked collected")
+	}
 	goodSubmodule := findDependency(t, deps, "github.com/good/lib/submodule")
 	if goodSubmodule.Health.LatestRelease == nil || goodSubmodule.Health.LatestRelease.Tag != "v1.3.0" {
 		t.Fatalf("expected cached latest release for submodule dependency, got %#v", goodSubmodule.Health.LatestRelease)
@@ -365,10 +368,62 @@ require (
 	if len(quiet.CollectionStatus.Errors) == 0 {
 		t.Fatal("expected inaccessible SBOM to record a collection error")
 	}
+	if !quiet.CollectionStatus.HealthCollected {
+		t.Fatal("expected SBOM-only failure not to mark health collection incomplete")
+	}
 
 	unresolved := findDependency(t, deps, "example.com/unresolved/lib")
 	if unresolved.Repository.Resolved {
 		t.Fatalf("expected unresolved dependency, got %#v", unresolved.Repository)
+	}
+}
+
+func TestCollectDependencyRepositoryFactsMarksHealthIncompleteOnHealthError(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/good/lib":
+			writeJSON(t, w, map[string]any{
+				"name":           "lib",
+				"full_name":      "good/lib",
+				"default_branch": "main",
+				"archived":       false,
+			})
+		case r.URL.Path == "/repos/good/lib/releases/latest":
+			http.NotFound(w, r)
+		case r.URL.Path == "/repos/good/lib/commits":
+			writeJSON(t, w, []map[string]any{{
+				"sha": "abc123",
+				"commit": map[string]any{
+					"committer": map[string]any{"date": "2026-02-01T00:00:00Z"},
+				},
+			}})
+		case r.URL.Path == "/repos/good/lib/actions/workflows":
+			http.Error(w, "forbidden", http.StatusForbidden)
+		case r.URL.Path == "/repos/good/lib/issues":
+			writeJSON(t, w, []any{})
+		case r.URL.Path == "/repos/good/lib/license":
+			http.NotFound(w, r)
+		case r.URL.Path == "/repos/good/lib/dependency-graph/sbom":
+			writeJSON(t, w, map[string]any{"sbom": map[string]any{}})
+		default:
+			t.Fatalf("unexpected GitHub API request: %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+	})
+
+	plugin := newTestPlugin(t, server.URL)
+	dep := newRepositoryDependency(goModuleDependency{Name: "github.com/good/lib", Version: "v1.0.0", Direct: true})
+	resolveDependencyRepository(dep)
+
+	plugin.collectDependencyRepositoryFacts(t.Context(), dep)
+
+	if dep.CollectionStatus.HealthCollected {
+		t.Fatal("expected health collection to remain incomplete after workflows error")
+	}
+	if len(dep.CollectionStatus.Errors) != 1 || dep.CollectionStatus.Errors[0].Scope != "workflows" {
+		t.Fatalf("expected one workflows collection error, got %#v", dep.CollectionStatus.Errors)
 	}
 }
 
@@ -516,7 +571,39 @@ func TestDependencyPolicyInputDefaultsPolicyData(t *testing.T) {
 	}
 }
 
-func TestListPullRequestIssuesPaginatesAndFiltersPullRequests(t *testing.T) {
+func TestMedianHoursToFirstInteractionStopsAfterFirstCollectionError(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	requests := 0
+	mux.HandleFunc("/repos/good/lib/issues/1/comments", func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "forbidden", http.StatusForbidden)
+	})
+
+	plugin := newTestPlugin(t, server.URL)
+	dep := newRepositoryDependency(goModuleDependency{Name: "github.com/good/lib", Version: "v1.0.0", Direct: true})
+	resolveDependencyRepository(dep)
+	dep.Health.PullRequests = &DependencyPullRequestStats{}
+	prs := []*github.Issue{
+		{Number: github.Ptr(1), CreatedAt: githubTimestamp("2026-01-01T00:00:00Z")},
+		{Number: github.Ptr(2), CreatedAt: githubTimestamp("2026-01-02T00:00:00Z")},
+	}
+
+	median := plugin.medianHoursToFirstInteraction(t.Context(), dep, prs)
+
+	if median != nil {
+		t.Fatalf("expected no median after collection error, got %v", *median)
+	}
+	if requests != 1 {
+		t.Fatalf("expected first interaction collection to stop after one error, got %d requests", requests)
+	}
+	if len(dep.CollectionStatus.Errors) != 1 || dep.CollectionStatus.Errors[0].Scope != "pull_request_interactions" {
+		t.Fatalf("expected one pull_request_interactions error, got %#v", dep.CollectionStatus.Errors)
+	}
+}
+
+func TestListPullRequestIssuesFiltersPullRequests(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -524,20 +611,10 @@ func TestListPullRequestIssuesPaginatesAndFiltersPullRequests(t *testing.T) {
 		if r.URL.Query().Get("state") != "closed" {
 			t.Fatalf("unexpected state: %s", r.URL.Query().Get("state"))
 		}
-		switch r.URL.Query().Get("page") {
-		case "1":
-			w.Header().Set("Link", `<`+server.URL+`/repos/good/lib/issues?page=2>; rel="next"`)
-			writeJSON(t, w, []map[string]any{
-				{"number": 1, "pull_request": map[string]any{"url": "https://api.github.test/repos/good/lib/pulls/1"}},
-				{"number": 2},
-			})
-		case "2":
-			writeJSON(t, w, []map[string]any{
-				{"number": 3, "pull_request": map[string]any{"url": "https://api.github.test/repos/good/lib/pulls/3"}},
-			})
-		default:
-			t.Fatalf("unexpected page: %s", r.URL.Query().Get("page"))
-		}
+		writeJSON(t, w, []map[string]any{
+			{"number": 1, "pull_request": map[string]any{"url": "https://api.github.test/repos/good/lib/pulls/1"}},
+			{"number": 2},
+		})
 	})
 
 	plugin := newTestPlugin(t, server.URL)
@@ -548,11 +625,11 @@ func TestListPullRequestIssuesPaginatesAndFiltersPullRequests(t *testing.T) {
 	if capped {
 		t.Fatal("expected uncapped pull request issue result")
 	}
-	if len(prs) != 2 {
-		t.Fatalf("expected 2 pull request issues, got %d", len(prs))
+	if len(prs) != 1 {
+		t.Fatalf("expected 1 pull request issue, got %d", len(prs))
 	}
-	if prs[0].GetNumber() != 1 || prs[1].GetNumber() != 3 {
-		t.Fatalf("unexpected pull request issue numbers: %d, %d", prs[0].GetNumber(), prs[1].GetNumber())
+	if prs[0].GetNumber() != 1 {
+		t.Fatalf("unexpected pull request issue number: %d", prs[0].GetNumber())
 	}
 }
 

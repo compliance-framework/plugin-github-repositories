@@ -15,7 +15,7 @@ const (
 	dependencyEcosystemGo = "go"
 	dependencySourceGoMod = "go.mod"
 	dependencyPRPageSize  = 100
-	dependencyPRMaxPages  = 10
+	dependencyPRMaxPages  = 1
 )
 
 type goModuleDependency struct {
@@ -347,12 +347,14 @@ func (l *GithubReposPlugin) collectDependencyRepositoryFacts(ctx context.Context
 	}
 
 	dep.Health.RepositoryArchived = repo.GetArchived()
-	dep.CollectionStatus.HealthCollected = true
 
+	healthErrorCount := len(dep.CollectionStatus.Errors)
 	l.collectDependencyRelease(ctx, dep)
 	l.collectDependencyCommit(ctx, dep, repo.GetDefaultBranch())
 	l.collectDependencyWorkflows(ctx, dep, repo.GetDefaultBranch())
 	l.collectDependencyPullRequests(ctx, dep)
+	dep.CollectionStatus.HealthCollected = len(dep.CollectionStatus.Errors) == healthErrorCount
+
 	l.collectDependencyLicense(ctx, dep)
 	if l.config.dependencyHealthCollectSBOM {
 		l.collectDependencySBOM(ctx, dep)
@@ -583,7 +585,7 @@ func (l *GithubReposPlugin) medianHoursToFirstInteraction(ctx context.Context, d
 		first, err := l.firstPullRequestInteraction(ctx, dep.Repository.Owner, dep.Repository.Name, pr.GetNumber(), *created)
 		if err != nil {
 			l.recordDependencyCollectionError(dep, "pull_request_interactions", err)
-			continue
+			break
 		}
 		if first == nil {
 			continue

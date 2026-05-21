@@ -21,7 +21,7 @@ To authenticate this plugin, you must provide a token which has at minimum the f
 - Secret scanning alerts (read-only) - Used to check if secrets have been found
 - Secret scanning push protection bypass requests (read-only) - Used to check the process of any bypass requests
 
-When dependency health collection is enabled, the token also uses repository contents, Actions, pull request, license, and dependency graph/SBOM APIs against resolved public GitHub dependency repositories. Missing permissions or unavailable upstream data are recorded as dependency-level collection gaps and do not fail the repository evaluation.
+When dependency health collection is enabled, the token also uses repository contents, Actions, pull request, license, and dependency graph/SBOM APIs against resolved public GitHub dependency repositories. Missing permissions or unavailable upstream data for resolved dependency repositories are recorded as dependency-level collection gaps and do not fail the repository evaluation.
 
 ## Configuration
 
@@ -37,12 +37,12 @@ plugins:
     included_repositories: foo,bar,baz
     excluded_repositories: quix,quiz
     # Optional dependency health collection. Disabled by default to avoid extra GitHub API usage.
-    dependency_health_enabled: false
-    dependency_health_max_dependencies: 50
-    dependency_health_closed_pr_lookback_days: 180
-    dependency_health_include_unresolved: true
-    dependency_health_collect_sbom: true
-    dependency_health_pr_interaction_sample_size: 20
+    dependency_health_enabled: "false"
+    dependency_health_max_dependencies: "50"
+    dependency_health_closed_pr_lookback_days: "180"
+    dependency_health_include_unresolved: "true"
+    dependency_health_collect_sbom: "true"
+    dependency_health_pr_interaction_sample_size: "20"
 ```
 
 Dependency health collection currently parses direct `go.mod` dependencies only. It resolves module paths that start with `github.com/{owner}/{repo}` and collects public upstream repository health signals.
