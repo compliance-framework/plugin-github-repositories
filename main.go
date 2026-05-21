@@ -40,7 +40,7 @@ type PluginConfig struct {
 	DependencyHealthPRInteractionSampleSize string `mapstructure:"dependency_health_pr_interaction_sample_size"`
 
 	// Parsed values (set during Configure)
-	policyData                               map[string]interface{}
+	policyData                              map[string]interface{}
 	deploymentLookbackDays                  int
 	onlyActiveDeployments                   bool
 	includeFailedDeployments                bool
@@ -287,6 +287,15 @@ func (l *GithubReposPlugin) Init(req *proto.InitRequest, apiHelper runner.ApiHel
 
 func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHelper) (*proto.EvalResponse, error) {
 	ctx := context.TODO()
+	policyRequest := requestWithDefaultPolicyBehavior(req)
+	repositoryPolicyPaths := policyRequest.PolicyPathsForBehavior(policyBehaviorRepository)
+	dependencyPolicyPaths := policyRequest.PolicyPathsForBehavior(policyBehaviorDependency)
+	l.Logger.Debug(
+		"Resolved policy paths by behavior",
+		"policy_paths", policyRequest.GetPolicyPaths(),
+		"repository_policy_paths", repositoryPolicyPaths,
+		"dependency_policy_paths", dependencyPolicyPaths,
+	)
 	repochan, errchan := l.FetchRepositories(ctx, req)
 	done := false
 
@@ -449,7 +458,7 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				}, err
 			}
 			data := &SaturatedRepository{
-		Settings:              repo,
+				Settings:              repo,
 				Workflows:             workflows,
 				WorkflowRuns:          workflowRuns,
 				ProtectedBranches:     branchNames,
@@ -466,11 +475,9 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				RepositoryTeams:       repositoryTeams,
 				Environments:          environments,
 				EffectiveBranchRules:  effectiveBranchRules,
-			PolicyData:            l.config.policyData,
+				PolicyData:            l.config.policyData,
 			}
 
-			repositoryPolicyPaths := policyPathsForBehavior(req, policyBehaviorRepository)
-			dependencyPolicyPaths := policyPathsForBehavior(req, policyBehaviorDependency)
 			if len(repositoryPolicyPaths) > 0 {
 				evidences, err := l.EvaluatePolicies(ctx, data, nil, repositoryPolicyPaths, nil)
 				if err != nil {
@@ -1166,39 +1173,17 @@ const (
 	defaultDependencyPolicySource = "plugin-github-repositories-dependency-policies"
 )
 
-func policyPathsForBehavior(req *proto.EvalRequest, behavior string) []string {
+var defaultPolicyBehaviors = map[string][]string{
+	defaultDependencyPolicySource: {policyBehaviorDependency},
+}
+
+func requestWithDefaultPolicyBehavior(req *proto.EvalRequest) *proto.EvalRequest {
 	if req == nil {
 		return nil
 	}
-	mapping := proto.PolicyBehaviorMappingFromStruct(req.GetPolicyBehaviorMapping())
-	filtered := make([]string, 0, len(req.GetPolicyPaths()))
-	for _, policyPath := range req.GetPolicyPaths() {
-		if mappedBehaviors, ok := mapping[policyPath]; ok {
-			if slices.Contains(mappedBehaviors, behavior) {
-				filtered = append(filtered, policyPath)
-			}
-			continue
-		}
-		if defaultPolicyPathMatchesBehavior(policyPath, behavior) {
-			filtered = append(filtered, policyPath)
-		}
-	}
-	return filtered
-}
-
-func defaultPolicyPathMatchesBehavior(policyPath string, behavior string) bool {
-	switch behavior {
-	case policyBehaviorRepository:
-		return !isDefaultDependencyPolicyPath(policyPath)
-	case policyBehaviorDependency:
-		return isDefaultDependencyPolicyPath(policyPath)
-	default:
-		return false
-	}
-}
-
-func isDefaultDependencyPolicyPath(policyPath string) bool {
-	return strings.Contains(policyPath, defaultDependencyPolicySource)
+	return req.
+		WithDefaultPolicyBehavior(defaultPolicyBehaviors).
+		WithUndefinedMappedTo([]string{policyBehaviorRepository})
 }
 
 func appendDependencyEvidenceLinks(evidences []*proto.Evidence, dependency *RepositoryDependency) {

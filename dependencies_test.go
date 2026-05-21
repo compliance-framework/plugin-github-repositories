@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +109,26 @@ func TestMedianHelpers(t *testing.T) {
 	if got == nil || *got != 4 {
 		t.Fatalf("expected median 4, got %v", got)
 	}
+}
+
+func TestRequestWithDefaultPolicyBehaviorClassifiesAllPolicyPaths(t *testing.T) {
+	req := &proto.EvalRequest{
+		PolicyPaths: []string{
+			"ghcr.io/compliance-framework/plugin-github-repositories-policies:v0.6.1",
+			"/policies/plugin-github-repositories-dependency-policies.tar.gz",
+			"/policies/custom-github-repository-policies.tar.gz",
+		},
+	}
+
+	policyRequest := requestWithDefaultPolicyBehavior(req)
+
+	assertStringSlicesEqual(t, policyRequest.PolicyPathsForBehavior(policyBehaviorRepository), []string{
+		"ghcr.io/compliance-framework/plugin-github-repositories-policies:v0.6.1",
+		"/policies/custom-github-repository-policies.tar.gz",
+	})
+	assertStringSlicesEqual(t, policyRequest.PolicyPathsForBehavior(policyBehaviorDependency), []string{
+		"/policies/plugin-github-repositories-dependency-policies.tar.gz",
+	})
 }
 
 func TestGatherRepositoryDependenciesEndToEnd(t *testing.T) {
@@ -440,6 +461,13 @@ func evidenceHasHref(evidence *proto.Evidence, href string) bool {
 		}
 	}
 	return false
+}
+
+func assertStringSlicesEqual(t *testing.T, got []string, want []string) {
+	t.Helper()
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
 }
 
 func newTestPlugin(t *testing.T, serverURL string) *GithubReposPlugin {
