@@ -15,7 +15,7 @@ const (
 	dependencyEcosystemGo = "go"
 	dependencySourceGoMod = "go.mod"
 	dependencyPRPageSize  = 100
-	dependencyPRMaxPages  = 10
+	dependencyPRMaxPages  = 1
 )
 
 type goModuleDependency struct {
@@ -345,12 +345,12 @@ func newDependencyCollectionGap(scope string, err error) *RepositoryDependency {
 		Repository:       &DependencyRepository{},
 		Health:           &DependencyHealth{},
 		SupplyChain:      &DependencySupplyChain{},
-		CollectionStatus: &DependencyCollectionStatus{},
+		CollectionStatus: &DependencyCollectionStatus{
+			Errors: make([]*DependencyCollectionError, 0),
+		},
 	}
 	if err != nil {
-		dep.CollectionStatus.Errors = []*DependencyCollectionError{
-			{Scope: scope, Message: err.Error()},
-		}
+		dep.CollectionStatus.Errors = append(dep.CollectionStatus.Errors, &DependencyCollectionError{Scope: scope, Message: err.Error()})
 	}
 	return dep
 }

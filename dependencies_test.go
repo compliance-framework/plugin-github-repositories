@@ -638,6 +638,17 @@ func TestGatherRepositoryDependenciesMissingGoModEmitsCollectionGapForPolicies(t
 	}
 }
 
+func TestNewDependencyCollectionGapSerializesEmptyErrors(t *testing.T) {
+	dep := newDependencyCollectionGap("go_mod_fetch", nil)
+	payload, err := json.Marshal(dep)
+	if err != nil {
+		t.Fatalf("failed to marshal dependency collection gap: %v", err)
+	}
+	if !strings.Contains(string(payload), `"errors":[]`) {
+		t.Fatalf("expected empty errors array, got %s", payload)
+	}
+}
+
 func TestEvaluatePoliciesRunsDependencyPoliciesPerDependency(t *testing.T) {
 	policyDir := filepath.Join(t.TempDir(), "plugin-github-repositories-dependency-policies")
 	if err := os.MkdirAll(policyDir, 0o755); err != nil {
