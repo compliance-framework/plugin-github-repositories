@@ -2,10 +2,8 @@ module github.com/compliance-framework/plugin-github-repositories
 
 go 1.26.1
 
-replace github.com/compliance-framework/agent => ../agent
-
 require (
-	github.com/compliance-framework/agent v0.6.2
+	github.com/compliance-framework/agent v0.7.0
 	github.com/google/go-github/v71 v71.0.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.7.0
