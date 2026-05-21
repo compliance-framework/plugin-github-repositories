@@ -574,7 +574,7 @@ Suggested behavior:
 Suggested title:
 
 ```rego
-title := "Direct dependency has recent upstream activity"
+title := "Direct dependency has stale upstream activity"
 ```
 
 Suggested description:

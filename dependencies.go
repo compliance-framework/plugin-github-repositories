@@ -513,16 +513,22 @@ func (l *GithubReposPlugin) listPullRequestIssues(ctx context.Context, owner, re
 		opts.Since = since
 	}
 
-	issues, _, err := l.githubClient.Issues.ListByRepo(ctx, owner, repo, opts)
-	if err != nil {
-		return nil, err
-	}
-	prs := make([]*github.Issue, 0, len(issues))
-	for _, issue := range issues {
-		if issue == nil || !issue.IsPullRequest() {
-			continue
+	prs := make([]*github.Issue, 0, dependencyPRPageSize)
+	for {
+		issues, resp, err := l.githubClient.Issues.ListByRepo(ctx, owner, repo, opts)
+		if err != nil {
+			return nil, err
 		}
-		prs = append(prs, issue)
+		for _, issue := range issues {
+			if issue == nil || !issue.IsPullRequest() {
+				continue
+			}
+			prs = append(prs, issue)
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
 	return prs, nil
 }

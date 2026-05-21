@@ -198,7 +198,7 @@ type GithubReposPlugin struct {
 
 func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.ConfigureResponse, error) {
 	l.Logger.Info("Configuring GitHub Repositories Plugin")
-	config := &PluginConfig{}
+	config := &PluginConfig{policyData: map[string]interface{}{}}
 
 	if err := mapstructure.Decode(req.Config, config); err != nil {
 		l.Logger.Error("Error decoding config", "error", err)
@@ -224,8 +224,8 @@ func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.Confi
 	}
 	l.Logger.Debug(
 		"Policy data parsed",
-		"policy_data", config.policyData,
 		"policy_data_keys", mapKeys(config.policyData),
+		"policy_data_count", len(config.policyData),
 	)
 	l.Logger.Debug(
 		"Dependency health config parsed",
@@ -1064,8 +1064,8 @@ func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *Saturate
 				"Repository policy data prepared for evaluation",
 				"repo", data.Settings.GetFullName(),
 				"policy_path", policyPath,
-				"policy_data", data.PolicyData,
 				"policy_data_keys", mapKeys(data.PolicyData),
+				"policy_data_count", len(data.PolicyData),
 			)
 			processor := policyManager.NewPolicyProcessor(
 				l.Logger,
@@ -1125,8 +1125,8 @@ func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *Saturate
 				"repo", data.Settings.GetFullName(),
 				"dependency", dependency.Name,
 				"policy_path", policyPath,
-				"policy_data", dependencyPolicyData,
 				"policy_data_keys", mapKeys(dependencyPolicyData),
+				"policy_data_count", len(dependencyPolicyData),
 			)
 			processor := policyManager.NewPolicyProcessor(
 				l.Logger,
@@ -1213,6 +1213,9 @@ func evidenceHasLink(evidence *proto.Evidence, href string) bool {
 }
 
 func dependencyPolicyInput(repo *github.Repository, dependency *RepositoryDependency, policyData map[string]interface{}) *DependencyPolicyInput {
+	if policyData == nil {
+		policyData = map[string]interface{}{}
+	}
 	return &DependencyPolicyInput{
 		Repository: &DependencyParentRepository{
 			Organization: repo.GetOwner().GetLogin(),

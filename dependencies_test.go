@@ -88,6 +88,25 @@ func TestDependencyHealthConfigDefaultsAndInvalidValues(t *testing.T) {
 	}
 }
 
+func TestConfigureDefaultsPolicyData(t *testing.T) {
+	plugin := &GithubReposPlugin{Logger: hclog.NewNullLogger()}
+	_, err := plugin.Configure(&proto.ConfigureRequest{
+		Config: map[string]string{
+			"token":        "test-token",
+			"organization": "test-org",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Configure returned error: %v", err)
+	}
+	if plugin.config.policyData == nil {
+		t.Fatal("expected policy data to default to an empty map")
+	}
+	if len(plugin.config.policyData) != 0 {
+		t.Fatalf("expected empty policy data, got %#v", plugin.config.policyData)
+	}
+}
+
 func TestMedianHelpers(t *testing.T) {
 	prs := []*github.Issue{
 		{
@@ -372,6 +391,7 @@ title := "Dependency is not archived"
 description := "Dependency repositories should not be archived."
 
 violation[{"id": "dependency_repository_archived"}] if {
+	object.get(object.get(input.policy_data, "dependency_health", {}), "fail_archived", false)
 	input.dependency.health.repository_archived == true
 }
 `)
@@ -390,7 +410,7 @@ violation[{"id": "dependency_repository_archived"}] if {
 	}
 	data := &SaturatedRepository{
 		Settings:   repo,
-		PolicyData: map[string]interface{}{"dependency_health": map[string]interface{}{"example": true}},
+		PolicyData: map[string]interface{}{"dependency_health": map[string]interface{}{"fail_archived": true}},
 	}
 	deps := []*RepositoryDependency{
 		{
@@ -409,7 +429,7 @@ violation[{"id": "dependency_repository_archived"}] if {
 		},
 	}
 
-	evidence, err := plugin.EvaluatePolicies(t.Context(), data, deps, []string{policyDir}, nil)
+	evidence, err := plugin.EvaluatePolicies(t.Context(), data, deps, []string{policyDir}, data.PolicyData)
 	if err != nil {
 		t.Fatalf("EvaluatePolicies returned error: %v", err)
 	}
@@ -419,9 +439,10 @@ violation[{"id": "dependency_repository_archived"}] if {
 
 	byDependency := map[string]*proto.Evidence{}
 	for _, ev := range evidence {
-		byDependency[ev.Labels["dependency"]] = ev
-		if ev.Labels["type"] != "repository-dependency" {
-			t.Fatalf("expected dependency evidence type label, got %q", ev.Labels["type"])
+		labels := ev.GetLabels()
+		byDependency[labels["dependency"]] = ev
+		if labels["type"] != "repository-dependency" {
+			t.Fatalf("expected dependency evidence type label, got %q", labels["type"])
 		}
 	}
 
@@ -429,28 +450,28 @@ violation[{"id": "dependency_repository_archived"}] if {
 	if foo == nil {
 		t.Fatal("missing evidence for foo dependency")
 	}
-	if foo.Status.GetState() != proto.EvidenceStatusState_EVIDENCE_STATUS_STATE_SATISFIED {
-		t.Fatalf("expected foo evidence to pass, got %s", foo.Status.GetState())
+	if foo.GetStatus().GetState() != proto.EvidenceStatusState_EVIDENCE_STATUS_STATE_SATISFIED {
+		t.Fatalf("expected foo evidence to pass, got %s", foo.GetStatus().GetState())
 	}
-	if len(foo.Subjects) == 0 || !strings.Contains(foo.Subjects[0].Identifier, "internally-maintained-open-source/foo@v1.0.0") {
-		t.Fatalf("expected foo dependency subject, got %#v", foo.Subjects)
+	if len(foo.GetSubjects()) == 0 || !strings.Contains(foo.GetSubjects()[0].GetIdentifier(), "internally-maintained-open-source/foo@v1.0.0") {
+		t.Fatalf("expected foo dependency subject, got %#v", foo.GetSubjects())
 	}
 	if !evidenceHasHref(foo, "https://github.com/internally-maintained-open-source/foo") {
-		t.Fatalf("expected foo evidence to link to dependency repository, got %#v", foo.Links)
+		t.Fatalf("expected foo evidence to link to dependency repository, got %#v", foo.GetLinks())
 	}
 
 	bar := byDependency["competitor-maintained-open-source/bar"]
 	if bar == nil {
 		t.Fatal("missing evidence for bar dependency")
 	}
-	if bar.Status.GetState() != proto.EvidenceStatusState_EVIDENCE_STATUS_STATE_NOT_SATISFIED {
-		t.Fatalf("expected bar evidence to fail, got %s", bar.Status.GetState())
+	if bar.GetStatus().GetState() != proto.EvidenceStatusState_EVIDENCE_STATUS_STATE_NOT_SATISFIED {
+		t.Fatalf("expected bar evidence to fail, got %s", bar.GetStatus().GetState())
 	}
-	if len(bar.Props) != 1 || bar.Props[0].Value != "dependency_repository_archived" {
-		t.Fatalf("expected archived violation prop, got %#v", bar.Props)
+	if len(bar.GetProps()) != 1 || bar.GetProps()[0].GetValue() != "dependency_repository_archived" {
+		t.Fatalf("expected archived violation prop, got %#v", bar.GetProps())
 	}
 	if !evidenceHasHref(bar, "https://github.com/competitor-maintained-open-source/bar") {
-		t.Fatalf("expected bar evidence to link to dependency repository, got %#v", bar.Links)
+		t.Fatalf("expected bar evidence to link to dependency repository, got %#v", bar.GetLinks())
 	}
 }
 
@@ -461,6 +482,59 @@ func evidenceHasHref(evidence *proto.Evidence, href string) bool {
 		}
 	}
 	return false
+}
+
+func TestDependencyPolicyInputDefaultsPolicyData(t *testing.T) {
+	repo := &github.Repository{
+		Name:     github.Ptr("api"),
+		FullName: github.Ptr("ccf/api"),
+		HTMLURL:  github.Ptr("https://github.com/ccf/api"),
+		Owner:    &github.User{Login: github.Ptr("ccf")},
+	}
+	input := dependencyPolicyInput(repo, &RepositoryDependency{Name: "github.com/example/lib"}, nil)
+	if input.PolicyData == nil {
+		t.Fatal("expected dependency policy data to default to an empty map")
+	}
+	if len(input.PolicyData) != 0 {
+		t.Fatalf("expected empty dependency policy data, got %#v", input.PolicyData)
+	}
+}
+
+func TestListPullRequestIssuesPaginatesAndFiltersPullRequests(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	mux.HandleFunc("/repos/good/lib/issues", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("state") != "closed" {
+			t.Fatalf("unexpected state: %s", r.URL.Query().Get("state"))
+		}
+		switch r.URL.Query().Get("page") {
+		case "1":
+			w.Header().Set("Link", `<`+server.URL+`/repos/good/lib/issues?page=2>; rel="next"`)
+			writeJSON(t, w, []map[string]any{
+				{"number": 1, "pull_request": map[string]any{"url": "https://api.github.test/repos/good/lib/pulls/1"}},
+				{"number": 2},
+			})
+		case "2":
+			writeJSON(t, w, []map[string]any{
+				{"number": 3, "pull_request": map[string]any{"url": "https://api.github.test/repos/good/lib/pulls/3"}},
+			})
+		default:
+			t.Fatalf("unexpected page: %s", r.URL.Query().Get("page"))
+		}
+	})
+
+	plugin := newTestPlugin(t, server.URL)
+	prs, err := plugin.listPullRequestIssues(t.Context(), "good", "lib", "closed", time.Time{})
+	if err != nil {
+		t.Fatalf("listPullRequestIssues returned error: %v", err)
+	}
+	if len(prs) != 2 {
+		t.Fatalf("expected 2 pull request issues, got %d", len(prs))
+	}
+	if prs[0].GetNumber() != 1 || prs[1].GetNumber() != 3 {
+		t.Fatalf("unexpected pull request issue numbers: %d, %d", prs[0].GetNumber(), prs[1].GetNumber())
+	}
 }
 
 func assertStringSlicesEqual(t *testing.T, got []string, want []string) {
