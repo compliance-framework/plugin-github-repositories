@@ -15,7 +15,7 @@ const (
 	dependencyEcosystemGo = "go"
 	dependencySourceGoMod = "go.mod"
 	dependencyPRPageSize  = 100
-	dependencyPRMaxPages  = 1
+	dependencyPRMaxPages  = 10
 )
 
 type goModuleDependency struct {
@@ -573,11 +573,13 @@ func (l *GithubReposPlugin) medianHoursToFirstInteraction(ctx context.Context, d
 		limit = len(prs)
 	}
 	values := make([]float64, 0, limit)
+	sampled := 0
 	for i := 0; i < limit; i++ {
 		pr := prs[i]
 		if pr == nil {
 			continue
 		}
+		sampled++
 		created := githubTimestampTime(pr.CreatedAt)
 		if created == nil {
 			continue
@@ -593,7 +595,7 @@ func (l *GithubReposPlugin) medianHoursToFirstInteraction(ctx context.Context, d
 		values = append(values, first.Sub(*created).Hours())
 	}
 	if dep.Health.PullRequests != nil {
-		dep.Health.PullRequests.FirstInteractionSampledPullRequests = len(values)
+		dep.Health.PullRequests.FirstInteractionSampledPullRequests = sampled
 	}
 	return medianFloat64(values)
 }

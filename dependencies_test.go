@@ -338,8 +338,8 @@ require (
 	if good.Health.PullRequests.MedianHoursToFirstInteraction == nil || *good.Health.PullRequests.MedianHoursToFirstInteraction != 24 {
 		t.Fatalf("expected median hours to first interaction 24, got %#v", good.Health.PullRequests.MedianHoursToFirstInteraction)
 	}
-	if good.Health.PullRequests.FirstInteractionSampledPullRequests != 1 {
-		t.Fatalf("expected one successful first-interaction sample, got %d", good.Health.PullRequests.FirstInteractionSampledPullRequests)
+	if good.Health.PullRequests.FirstInteractionSampledPullRequests != 2 {
+		t.Fatalf("expected two first-interaction samples, got %d", good.Health.PullRequests.FirstInteractionSampledPullRequests)
 	}
 	if !good.CollectionStatus.HealthCollected {
 		t.Fatal("expected complete health collection to be marked collected")
@@ -710,7 +710,7 @@ func newTestPlugin(t *testing.T, serverURL string) *GithubReposPlugin {
 		config: &PluginConfig{
 			dependencyHealthEnabled:                 true,
 			dependencyHealthMaxDependencies:         50,
-			dependencyHealthClosedPRLookbackDays:    180,
+			dependencyHealthClosedPRLookbackDays:    3650,
 			dependencyHealthIncludeUnresolved:       true,
 			dependencyHealthCollectSBOM:             true,
 			dependencyHealthPRInteractionSampleSize: 20,
