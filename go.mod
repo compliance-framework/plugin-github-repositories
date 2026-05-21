@@ -3,12 +3,13 @@ module github.com/compliance-framework/plugin-github-repositories
 go 1.26.1
 
 require (
-	github.com/compliance-framework/agent v0.6.2
+	github.com/compliance-framework/agent v0.7.0
 	github.com/google/go-github/v71 v71.0.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.7.0
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/shurcooL/githubv4 v0.0.0-20240727222349-48295856cce7
+	golang.org/x/mod v0.34.0
 	golang.org/x/oauth2 v0.35.0
 )
 

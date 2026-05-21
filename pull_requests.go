@@ -114,6 +114,7 @@ func pullRequestKey(pr *github.PullRequest) int64 {
 	return int64(pr.GetNumber())
 }
 
+// FetchReviewThreads returns review-thread discussions keyed by pull request review ID.
 func (l *GithubReposPlugin) FetchReviewThreads(ctx context.Context, prs []*github.PullRequest, reviewsByPR map[int64][]*github.PullRequestReview) (map[int64][]*PullRequestReviewThread, error) {
 	threadsByReview := make(map[int64][]*PullRequestReviewThread)
 	if l.graphqlClient == nil {

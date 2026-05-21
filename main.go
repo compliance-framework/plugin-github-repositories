@@ -21,27 +21,42 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// Validator is implemented by configuration values that can validate themselves.
 type Validator interface {
 	Validate() error
 }
 
+// PluginConfig contains user-provided and parsed runtime configuration for the plugin.
 type PluginConfig struct {
-	Token                    string `mapstructure:"token"`
-	Organization             string `mapstructure:"organization"`
-	IncludedRepositories     string `mapstructure:"included_repositories"`
-	ExcludedRepositories     string `mapstructure:"excluded_repositories"`
-	DeploymentLookbackDays   string `mapstructure:"deployment_lookback_days"`   // Number of days to look back for deployments (default: 90)
-	OnlyActiveDeployments    string `mapstructure:"only_active_deployments"`    // Only fetch deployments that are still active (not superseded) (default: false)
-	IncludeFailedDeployments string `mapstructure:"include_failed_deployments"` // Include deployments with failure/error states (default: false)
-	PolicyInput              string `mapstructure:"policy_input"`               // Policy-specific input as JSON string (e.g., {"workflow_names": ["ci.yml", "build.yml"]})
+	Token                                   string `mapstructure:"token"`
+	Organization                            string `mapstructure:"organization"`
+	IncludedRepositories                    string `mapstructure:"included_repositories"`
+	ExcludedRepositories                    string `mapstructure:"excluded_repositories"`
+	DeploymentLookbackDays                  string `mapstructure:"deployment_lookback_days"`   // Number of days to look back for deployments (default: 90)
+	OnlyActiveDeployments                   string `mapstructure:"only_active_deployments"`    // Only fetch deployments that are still active (not superseded) (default: false)
+	IncludeFailedDeployments                string `mapstructure:"include_failed_deployments"` // Include deployments with failure/error states (default: false)
+	DependencyHealthEnabled                 string `mapstructure:"dependency_health_enabled"`
+	DependencyHealthMaxDependencies         string `mapstructure:"dependency_health_max_dependencies"`
+	DependencyHealthClosedPRLookbackDays    string `mapstructure:"dependency_health_closed_pr_lookback_days"`
+	DependencyHealthIncludeUnresolved       string `mapstructure:"dependency_health_include_unresolved"`
+	DependencyHealthCollectSBOM             string `mapstructure:"dependency_health_collect_sbom"`
+	DependencyHealthPRInteractionSampleSize string `mapstructure:"dependency_health_pr_interaction_sample_size"`
+	PolicyInput                             string `mapstructure:"policy_input"`
 
 	// Parsed values (set during Configure)
-	deploymentLookbackDays   int
-	onlyActiveDeployments    bool
-	includeFailedDeployments bool
-	policyInputMap           map[string]interface{}
+	policyData                              map[string]interface{}
+	deploymentLookbackDays                  int
+	onlyActiveDeployments                   bool
+	includeFailedDeployments                bool
+	dependencyHealthEnabled                 bool
+	dependencyHealthMaxDependencies         int
+	dependencyHealthClosedPRLookbackDays    int
+	dependencyHealthIncludeUnresolved       bool
+	dependencyHealthCollectSBOM             bool
+	dependencyHealthPRInteractionSampleSize int
 }
 
+// Validate checks required configuration fields and mutually exclusive repository filters.
 func (c *PluginConfig) Validate() error {
 	if c.Token == "" {
 		return fmt.Errorf("token is required")
@@ -95,26 +110,79 @@ func (c *PluginConfig) parseDeploymentConfig() error {
 	return nil
 }
 
-func (c *PluginConfig) parsePolicyInput() error {
-	// Parse policy input JSON string (default: empty map)
+func (c *PluginConfig) parseDependencyHealthConfig() error {
+	var err error
+	c.dependencyHealthEnabled, err = parseBoolConfig(c.DependencyHealthEnabled, false, "dependency_health_enabled")
+	if err != nil {
+		return err
+	}
+	c.dependencyHealthMaxDependencies, err = parsePositiveIntConfig(c.DependencyHealthMaxDependencies, 50, "dependency_health_max_dependencies")
+	if err != nil {
+		return err
+	}
+	c.dependencyHealthClosedPRLookbackDays, err = parsePositiveIntConfig(c.DependencyHealthClosedPRLookbackDays, 180, "dependency_health_closed_pr_lookback_days")
+	if err != nil {
+		return err
+	}
+	c.dependencyHealthIncludeUnresolved, err = parseBoolConfig(c.DependencyHealthIncludeUnresolved, true, "dependency_health_include_unresolved")
+	if err != nil {
+		return err
+	}
+	c.dependencyHealthCollectSBOM, err = parseBoolConfig(c.DependencyHealthCollectSBOM, true, "dependency_health_collect_sbom")
+	if err != nil {
+		return err
+	}
+	c.dependencyHealthPRInteractionSampleSize, err = parsePositiveIntConfig(c.DependencyHealthPRInteractionSampleSize, 20, "dependency_health_pr_interaction_sample_size")
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *PluginConfig) parseLegacyPolicyInput() (map[string]interface{}, error) {
 	if c.PolicyInput == "" {
-		c.policyInputMap = make(map[string]interface{})
-		return nil
+		return map[string]interface{}{}, nil
 	}
 
 	var result map[string]interface{}
 	if err := json.Unmarshal([]byte(c.PolicyInput), &result); err != nil {
-		return fmt.Errorf("invalid policy_input JSON: %w", err)
+		return nil, fmt.Errorf("invalid policy_input JSON: %w", err)
 	}
-	c.policyInputMap = result
-	return nil
+	return result, nil
 }
 
+func parseBoolConfig(value string, defaultValue bool, name string) (bool, error) {
+	if value == "" {
+		return defaultValue, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("invalid %s: %w", name, err)
+	}
+	return parsed, nil
+}
+
+func parsePositiveIntConfig(value string, defaultValue int, name string) (int, error) {
+	if value == "" {
+		return defaultValue, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %w", name, err)
+	}
+	if parsed <= 0 {
+		return 0, fmt.Errorf("invalid %s: must be greater than 0", name)
+	}
+	return parsed, nil
+}
+
+// DeploymentWithStatuses pairs a deployment with its observed deployment statuses.
 type DeploymentWithStatuses struct {
 	Deployment *github.Deployment         `json:"deployment"`
 	Statuses   []*github.DeploymentStatus `json:"statuses"`
 }
 
+// SaturatedRepository contains all repository facts passed to repository policies.
 type SaturatedRepository struct {
 	Settings     *github.Repository    `json:"settings"`
 	Workflows    []*github.Workflow    `json:"workflows"`
@@ -136,9 +204,11 @@ type SaturatedRepository struct {
 	RepositoryTeams      []*RepositoryTeam                       `json:"repository_teams"`
 	Environments         []*RepositoryEnvironment                `json:"environments"`
 	EffectiveBranchRules map[string]*BranchRuleEvidence          `json:"effective_branch_rules"`
+	PolicyData           map[string]interface{}                  `json:"policy_data"`
 	PolicyInput          map[string]interface{}                  `json:"policy_input"`
 }
 
+// GithubReposPlugin implements the CCF runner interface for GitHub repository evidence.
 type GithubReposPlugin struct {
 	Logger hclog.Logger
 
@@ -147,9 +217,10 @@ type GithubReposPlugin struct {
 	graphqlClient *githubv4.Client
 }
 
+// Configure validates configuration and initializes GitHub REST and GraphQL clients.
 func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.ConfigureResponse, error) {
 	l.Logger.Info("Configuring GitHub Repositories Plugin")
-	config := &PluginConfig{}
+	config := &PluginConfig{policyData: map[string]interface{}{}}
 
 	if err := mapstructure.Decode(req.Config, config); err != nil {
 		l.Logger.Error("Error decoding config", "error", err)
@@ -166,12 +237,34 @@ func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.Confi
 		l.Logger.Error("Error parsing deployment config", "error", err)
 		return nil, err
 	}
-
-	// Parse policy input JSON string
-	if err := config.parsePolicyInput(); err != nil {
-		l.Logger.Error("Error parsing policy input", "error", err)
+	if err := config.parseDependencyHealthConfig(); err != nil {
+		l.Logger.Error("Error parsing dependency health config", "error", err)
 		return nil, err
 	}
+	if req.GetPolicyData() != nil {
+		config.policyData = req.GetPolicyData().AsMap()
+	} else {
+		legacyPolicyInput, err := config.parseLegacyPolicyInput()
+		if err != nil {
+			l.Logger.Error("Error parsing legacy policy input", "error", err)
+			return nil, err
+		}
+		config.policyData = legacyPolicyInput
+	}
+	l.Logger.Debug(
+		"Policy data parsed",
+		"policy_data_keys", mapKeys(config.policyData),
+		"policy_data_count", len(config.policyData),
+	)
+	l.Logger.Debug(
+		"Dependency health config parsed",
+		"enabled", config.dependencyHealthEnabled,
+		"max_dependencies", config.dependencyHealthMaxDependencies,
+		"closed_pr_lookback_days", config.dependencyHealthClosedPRLookbackDays,
+		"include_unresolved", config.dependencyHealthIncludeUnresolved,
+		"collect_sbom", config.dependencyHealthCollectSBOM,
+		"pr_interaction_sample_size", config.dependencyHealthPRInteractionSampleSize,
+	)
 
 	l.config = config
 	httpClient := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(&oauth2.Token{
@@ -183,6 +276,7 @@ func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.Confi
 	return &proto.ConfigureResponse{}, nil
 }
 
+// Init registers subject templates and policy-derived risks for this plugin.
 func (l *GithubReposPlugin) Init(req *proto.InitRequest, apiHelper runner.ApiHelper) (*proto.InitResponse, error) {
 	ctx := context.Background()
 
@@ -206,8 +300,18 @@ func (l *GithubReposPlugin) Init(req *proto.InitRequest, apiHelper runner.ApiHel
 	return runner.InitWithSubjectsAndRisksFromPolicies(ctx, l.Logger, req, apiHelper, subjectTemplates)
 }
 
+// Eval gathers repository evidence, evaluates repository policies, and evaluates dependency policies when configured.
 func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHelper) (*proto.EvalResponse, error) {
 	ctx := context.TODO()
+	policyRequest := requestWithDefaultPolicyBehavior(req)
+	repositoryPolicyPaths := policyRequest.PolicyPathsForBehavior(policyBehaviorRepository)
+	dependencyPolicyPaths := policyRequest.PolicyPathsForBehavior(policyBehaviorDependency)
+	l.Logger.Debug(
+		"Resolved policy paths by behavior",
+		"policy_paths", policyRequest.GetPolicyPaths(),
+		"repository_policy_paths", repositoryPolicyPaths,
+		"dependency_policy_paths", dependencyPolicyPaths,
+	)
 	repochan, errchan := l.FetchRepositories(ctx, req)
 	done := false
 
@@ -387,26 +491,73 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				RepositoryTeams:       repositoryTeams,
 				Environments:          environments,
 				EffectiveBranchRules:  effectiveBranchRules,
-				PolicyInput:           l.config.policyInputMap,
+				PolicyData:            l.config.policyData,
+				PolicyInput:           l.config.policyData,
 			}
-			// Uncomment to check the data that is being passed through from
-			// the client, as data formats are often slightly different than
-			// the raw API endpoints
-			evidences, err := l.EvaluatePolicies(ctx, data, req)
+
+			if len(repositoryPolicyPaths) > 0 {
+				evidences, err := l.EvaluatePolicies(ctx, data, nil, repositoryPolicyPaths, nil)
+				if err != nil {
+					l.Logger.Error("Error evaluating repository policies", "error", err)
+					return &proto.EvalResponse{
+						Status: proto.ExecutionStatus_FAILURE,
+					}, err
+				}
+				if err := apiHelper.CreateEvidence(ctx, evidences); err != nil {
+					l.Logger.Error("Error creating repository evidence", "error", err)
+					return &proto.EvalResponse{
+						Status: proto.ExecutionStatus_FAILURE,
+					}, err
+				}
+			}
+
+			if len(dependencyPolicyPaths) == 0 {
+				continue
+			}
+			if !l.config.dependencyHealthEnabled {
+				l.Logger.Warn(
+					"Dependency policy paths were provided, but dependency health collection is disabled",
+					"repo", repo.GetFullName(),
+					"dependency_policy_paths", dependencyPolicyPaths,
+				)
+				continue
+			}
+
+			l.Logger.Debug("Collecting repository dependencies", "repo", repo.GetFullName())
+			dependencies, err := l.gatherRepositoryDependencies(ctx, repo, func(*RepositoryDependency) error {
+				return nil
+			})
 			if err != nil {
-				l.Logger.Error("Error evaluating policies", "error", err)
+				l.Logger.Error("Error collecting repository dependencies", "error", err)
 				return &proto.EvalResponse{
 					Status: proto.ExecutionStatus_FAILURE,
 				}, err
 			}
-
-			if err := apiHelper.CreateEvidence(ctx, evidences); err != nil {
-				l.Logger.Error("Error creating evidence", "error", err)
+			dependencyEvidences, err := l.EvaluatePolicies(ctx, data, dependencies, dependencyPolicyPaths, l.config.policyData)
+			if err != nil {
+				l.Logger.Error("Error evaluating dependency policies", "error", err)
 				return &proto.EvalResponse{
 					Status: proto.ExecutionStatus_FAILURE,
 				}, err
 			}
-
+			if len(dependencyEvidences) > 0 {
+				if err := apiHelper.CreateEvidence(ctx, dependencyEvidences); err != nil {
+					l.Logger.Error("Error creating dependency evidence", "error", err)
+					return &proto.EvalResponse{
+						Status: proto.ExecutionStatus_FAILURE,
+					}, err
+				}
+			}
+			l.Logger.Debug("Submitted dependency evidence", "repo", repo.GetFullName(), "evidence_count", len(dependencyEvidences))
+			l.Logger.Debug("Repository dependency collection complete", "repo", repo.GetFullName(), "dependencies", len(dependencies))
+			if len(dependencies) == 0 {
+				l.Logger.Warn(
+					"Dependency policy paths were provided, but no dependencies are available for evaluation",
+					"repo", repo.GetFullName(),
+					"dependency_policy_paths", dependencyPolicyPaths,
+					"dependency_health_enabled", l.config.dependencyHealthEnabled,
+				)
+			}
 		}
 	}
 
@@ -415,6 +566,7 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 	}, nil
 }
 
+// FetchRepositories streams repositories selected by the plugin include/exclude configuration.
 func (l *GithubReposPlugin) FetchRepositories(ctx context.Context, req *proto.EvalRequest) (chan *github.Repository, chan error) {
 	repochan := make(chan *github.Repository)
 	errchan := make(chan error)
@@ -477,6 +629,7 @@ func (l *GithubReposPlugin) FetchRepositories(ctx context.Context, req *proto.Ev
 	return repochan, errchan
 }
 
+// FecthLatestRelease retrieves the latest GitHub release, returning nil when none exists.
 func (l *GithubReposPlugin) FecthLatestRelease(ctx context.Context, repo *github.Repository) (*github.RepositoryRelease, error) {
 	owner := repo.GetOwner().GetLogin()
 	name := repo.GetName()
@@ -494,6 +647,7 @@ func (l *GithubReposPlugin) FecthLatestRelease(ctx context.Context, repo *github
 	return release, nil
 }
 
+// GatherConfiguredWorkflows returns workflows configured in the repository.
 func (l *GithubReposPlugin) GatherConfiguredWorkflows(ctx context.Context, repo *github.Repository) ([]*github.Workflow, error) {
 	workflows, _, err := l.githubClient.Actions.ListWorkflows(ctx, repo.GetOwner().GetLogin(), repo.GetName(), nil)
 	if err != nil {
@@ -502,6 +656,7 @@ func (l *GithubReposPlugin) GatherConfiguredWorkflows(ctx context.Context, repo 
 	return workflows.Workflows, nil
 }
 
+// GatherWorkflowRuns returns recent workflow runs for the repository.
 func (l *GithubReposPlugin) GatherWorkflowRuns(ctx context.Context, repo *github.Repository) ([]*github.WorkflowRun, error) {
 	opts := &github.ListOptions{
 		PerPage: 100,
@@ -515,6 +670,7 @@ func (l *GithubReposPlugin) GatherWorkflowRuns(ctx context.Context, repo *github
 	return workflowRuns.WorkflowRuns, nil
 }
 
+// FetchDeploymentsWithStatuses returns filtered deployment evidence with statuses attached.
 func (l *GithubReposPlugin) FetchDeploymentsWithStatuses(ctx context.Context, repo *github.Repository) ([]*DeploymentWithStatuses, error) {
 	deployments, err := l.fetchDeploymentsWithStatuses(ctx, repo)
 	if err != nil {
@@ -523,6 +679,7 @@ func (l *GithubReposPlugin) FetchDeploymentsWithStatuses(ctx context.Context, re
 	return l.filterDeployments(deployments), nil
 }
 
+// FetchFailedDeploymentsWithStatuses returns deployments whose latest collected statuses include failures.
 func (l *GithubReposPlugin) FetchFailedDeploymentsWithStatuses(ctx context.Context, repo *github.Repository) ([]*DeploymentWithStatuses, error) {
 	deployments, err := l.fetchDeploymentsWithStatuses(ctx, repo)
 	if err != nil {
@@ -652,6 +809,7 @@ func (l *GithubReposPlugin) shouldSkipDeployment(deployment *github.Deployment, 
 	return false
 }
 
+// ListProtectedBranches returns all protected branches visible through the GitHub API.
 func (l *GithubReposPlugin) ListProtectedBranches(ctx context.Context, repo *github.Repository) ([]*github.Branch, error) {
 	owner := repo.GetOwner().GetLogin()
 	name := repo.GetName()
@@ -674,6 +832,7 @@ func (l *GithubReposPlugin) ListProtectedBranches(ctx context.Context, repo *git
 	return out, nil
 }
 
+// GetBranchProtectionAndRequiredStatusCheck merges branch protection and ruleset status-check evidence.
 func (l *GithubReposPlugin) GetBranchProtectionAndRequiredStatusCheck(ctx context.Context, repo *github.Repository, branch string) (*github.Protection, *github.RequiredStatusChecks, error) {
 	owner := repo.GetOwner().GetLogin()
 	name := repo.GetName()
@@ -774,6 +933,7 @@ func (l *GithubReposPlugin) GetBranchProtectionAndRequiredStatusCheck(ctx contex
 	return branchProtection, result, nil
 }
 
+// GatherSBOM returns the repository SBOM when GitHub dependency graph access permits it.
 func (l *GithubReposPlugin) GatherSBOM(ctx context.Context, repo *github.Repository) (*github.SBOM, error) {
 	sbom, _, err := l.githubClient.DependencyGraph.GetSBOM(ctx, repo.GetOwner().GetLogin(), repo.GetName())
 	if err != nil {
@@ -787,6 +947,7 @@ func (l *GithubReposPlugin) GatherSBOM(ctx context.Context, repo *github.Reposit
 	return sbom, nil
 }
 
+// GatherOpenPullRequests returns open pull requests for the repository.
 func (l *GithubReposPlugin) GatherOpenPullRequests(ctx context.Context, repo *github.Repository) ([]*github.PullRequest, error) {
 	opts := &github.ListOptions{
 		PerPage: 100,
@@ -801,7 +962,21 @@ func (l *GithubReposPlugin) GatherOpenPullRequests(ctx context.Context, repo *gi
 	return pullRequests, nil
 }
 
-func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *SaturatedRepository, req *proto.EvalRequest) ([]*proto.Evidence, error) {
+// EvaluatePolicies evaluates repository or dependency policy paths and returns generated evidence.
+func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *SaturatedRepository, dependencies []*RepositoryDependency, policyPaths []string, dependencyPolicyData map[string]interface{}) ([]*proto.Evidence, error) {
+	if data == nil {
+		return nil, errors.New("cannot evaluate policies without repository data")
+	}
+	if data.PolicyInput == nil {
+		data.PolicyInput = data.PolicyData
+	}
+	if data.Settings == nil {
+		if len(policyPaths) == 0 && len(dependencies) == 0 {
+			return nil, nil
+		}
+		return nil, errors.New("cannot evaluate policies without repository settings")
+	}
+
 	var accumulatedErrors error
 
 	activities := make([]*proto.Activity, 0)
@@ -919,29 +1094,246 @@ func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *Saturate
 		},
 	}
 
-	for _, policyPath := range req.GetPolicyPaths() {
-		processor := policyManager.NewPolicyProcessor(
-			l.Logger,
-			map[string]string{
-				"provider":     "github",
-				"type":         "repository",
-				"repository":   data.Settings.GetName(),
-				"organization": data.Settings.GetOwner().GetLogin(),
-			},
-			subjects,
-			components,
-			inventory,
-			actors,
-			activities,
-		)
-		evidence, err := processor.GenerateResults(ctx, policyPath, data)
-		evidences = slices.Concat(evidences, evidence)
-		if err != nil {
-			accumulatedErrors = errors.Join(accumulatedErrors, err)
+	l.Logger.Debug(
+		"Evaluating policies",
+		"repo", data.Settings.GetFullName(),
+		"policy_paths", policyPaths,
+		"dependencies", len(dependencies),
+	)
+
+	if len(dependencies) == 0 {
+		for _, policyPath := range policyPaths {
+			l.Logger.Debug("Evaluating repository policy path", "repo", data.Settings.GetFullName(), "policy_path", policyPath)
+			l.Logger.Debug(
+				"Repository policy data prepared for evaluation",
+				"repo", data.Settings.GetFullName(),
+				"policy_path", policyPath,
+				"policy_data_keys", mapKeys(data.PolicyData),
+				"policy_data_count", len(data.PolicyData),
+			)
+			processor := policyManager.NewPolicyProcessor(
+				l.Logger,
+				map[string]string{
+					"provider":     "github",
+					"type":         "repository",
+					"repository":   data.Settings.GetName(),
+					"organization": data.Settings.GetOwner().GetLogin(),
+				},
+				subjects,
+				components,
+				inventory,
+				actors,
+				activities,
+				data.PolicyData,
+			)
+			evidence, err := processor.GenerateResults(ctx, policyPath, data)
+			l.Logger.Debug("Repository policy evaluation complete", "repo", data.Settings.GetFullName(), "policy_path", policyPath, "evidence_count", len(evidence))
+			evidences = slices.Concat(evidences, evidence)
+			if err != nil {
+				accumulatedErrors = errors.Join(accumulatedErrors, err)
+			}
+		}
+	}
+
+	for _, dependency := range dependencies {
+		if dependency == nil {
+			continue
+		}
+		dependencyInput := dependencyPolicyInput(data.Settings, dependency, dependencyPolicyData)
+		dependencyComponents := slices.Concat(components, []*proto.Component{dependencyComponent()})
+		dependencyInventory := slices.Concat(inventory, []*proto.InventoryItem{dependencyInventoryItem(data.Settings, dependency)})
+		dependencySubjects := dependencySubjects(data.Settings, dependency)
+		dependencyLabels := map[string]string{
+			"provider":     "github",
+			"type":         "repository-dependency",
+			"repository":   data.Settings.GetName(),
+			"organization": data.Settings.GetOwner().GetLogin(),
+			"dependency":   dependency.Name,
+			"ecosystem":    dependency.Ecosystem,
+		}
+		if dependency.DeclaredVersion != "" {
+			dependencyLabels["dependency_version"] = dependency.DeclaredVersion
+		}
+
+		for _, policyPath := range policyPaths {
+			l.Logger.Debug(
+				"Evaluating dependency policy path",
+				"repo", data.Settings.GetFullName(),
+				"dependency", dependency.Name,
+				"declared_version", dependency.DeclaredVersion,
+				"resolved", dependency.Repository != nil && dependency.Repository.Resolved,
+				"policy_path", policyPath,
+			)
+			l.Logger.Debug(
+				"Dependency policy data prepared for evaluation",
+				"repo", data.Settings.GetFullName(),
+				"dependency", dependency.Name,
+				"policy_path", policyPath,
+				"policy_data_keys", mapKeys(dependencyPolicyData),
+				"policy_data_count", len(dependencyPolicyData),
+			)
+			processor := policyManager.NewPolicyProcessor(
+				l.Logger,
+				dependencyLabels,
+				dependencySubjects,
+				dependencyComponents,
+				dependencyInventory,
+				actors,
+				activities,
+				dependencyPolicyData,
+			)
+			evidence, err := processor.GenerateResults(ctx, policyPath, dependencyInput)
+			appendDependencyEvidenceLinks(evidence, dependency)
+			l.Logger.Debug(
+				"Dependency policy evaluation complete",
+				"repo", data.Settings.GetFullName(),
+				"dependency", dependency.Name,
+				"policy_path", policyPath,
+				"evidence_count", len(evidence),
+			)
+			evidences = slices.Concat(evidences, evidence)
+			if err != nil {
+				accumulatedErrors = errors.Join(accumulatedErrors, err)
+			}
 		}
 	}
 
 	return evidences, accumulatedErrors
+}
+
+func mapKeys(value map[string]interface{}) []string {
+	keys := make([]string, 0, len(value))
+	for key := range value {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+const (
+	policyBehaviorRepository = "repository"
+	policyBehaviorDependency = "dependency"
+
+	defaultDependencyPolicySource = "plugin-github-repositories-dependency-policies"
+)
+
+var defaultPolicyBehaviors = map[string][]string{
+	defaultDependencyPolicySource: {policyBehaviorDependency},
+}
+
+func requestWithDefaultPolicyBehavior(req *proto.EvalRequest) *proto.EvalRequest {
+	if req == nil {
+		return nil
+	}
+	return req.
+		WithDefaultPolicyBehavior(defaultPolicyBehaviors).
+		WithUndefinedMappedTo([]string{policyBehaviorRepository})
+}
+
+func appendDependencyEvidenceLinks(evidences []*proto.Evidence, dependency *RepositoryDependency) {
+	if dependency == nil || dependency.Repository == nil || dependency.Repository.URL == "" {
+		return
+	}
+	link := &proto.Link{
+		Href: dependency.Repository.URL,
+		Rel:  policyManager.Pointer("evidence"),
+		Text: policyManager.Pointer("Dependency Repository"),
+	}
+	for _, evidence := range evidences {
+		if evidence == nil || evidenceHasLink(evidence, link.Href) {
+			continue
+		}
+		evidence.Links = append(evidence.Links, link)
+	}
+}
+
+func evidenceHasLink(evidence *proto.Evidence, href string) bool {
+	for _, link := range evidence.GetLinks() {
+		if link.GetHref() == href {
+			return true
+		}
+	}
+	return false
+}
+
+func dependencyPolicyInput(repo *github.Repository, dependency *RepositoryDependency, policyData map[string]interface{}) *DependencyPolicyInput {
+	if policyData == nil {
+		policyData = map[string]interface{}{}
+	}
+	return &DependencyPolicyInput{
+		Repository: &DependencyParentRepository{
+			Organization: repo.GetOwner().GetLogin(),
+			Name:         repo.GetName(),
+			FullName:     repo.GetFullName(),
+			URL:          repo.GetHTMLURL(),
+		},
+		Dependency: dependency,
+		PolicyData: policyData,
+	}
+}
+
+func dependencyComponent() *proto.Component {
+	return &proto.Component{
+		Identifier:  "common-components/repository-dependency",
+		Type:        "software",
+		Title:       "Repository Dependency",
+		Description: "A software dependency declared by a monitored source repository.",
+		Purpose:     "To represent third-party or internally maintained software components that the repository relies on.",
+	}
+}
+
+func dependencyInventoryItem(repo *github.Repository, dependency *RepositoryDependency) *proto.InventoryItem {
+	props := []*proto.Property{
+		{Name: "name", Value: dependency.Name},
+		{Name: "ecosystem", Value: dependency.Ecosystem},
+		{Name: "repository", Value: repo.GetFullName()},
+	}
+	if dependency.DeclaredVersion != "" {
+		props = append(props, &proto.Property{Name: "declared_version", Value: dependency.DeclaredVersion})
+	}
+
+	links := []*proto.Link{}
+	if dependency.Repository != nil && dependency.Repository.URL != "" {
+		links = append(links, &proto.Link{
+			Href: dependency.Repository.URL,
+			Text: policyManager.Pointer("Dependency Repository URL"),
+		})
+	}
+
+	return &proto.InventoryItem{
+		Identifier: dependencyIdentifier(repo, dependency),
+		Type:       "repository-dependency",
+		Title:      fmt.Sprintf("Repository Dependency [%s]", dependency.Name),
+		Props:      props,
+		Links:      links,
+		ImplementedComponents: []*proto.InventoryItemImplementedComponent{
+			{Identifier: "common-components/repository-dependency"},
+		},
+	}
+}
+
+func dependencySubjects(repo *github.Repository, dependency *RepositoryDependency) []*proto.Subject {
+	return []*proto.Subject{
+		{
+			Type:       proto.SubjectType_SUBJECT_TYPE_INVENTORY_ITEM,
+			Identifier: dependencyIdentifier(repo, dependency),
+		},
+		{
+			Type:       proto.SubjectType_SUBJECT_TYPE_INVENTORY_ITEM,
+			Identifier: fmt.Sprintf("github-repository/%s", repo.GetFullName()),
+		},
+		{
+			Type:       proto.SubjectType_SUBJECT_TYPE_COMPONENT,
+			Identifier: "common-components/repository-dependency",
+		},
+	}
+}
+
+func dependencyIdentifier(repo *github.Repository, dependency *RepositoryDependency) string {
+	if dependency.DeclaredVersion == "" {
+		return fmt.Sprintf("github-repository-dependency/%s/%s", repo.GetFullName(), dependency.Name)
+	}
+	return fmt.Sprintf("github-repository-dependency/%s/%s@%s", repo.GetFullName(), dependency.Name, dependency.DeclaredVersion)
 }
 
 // isPermissionError returns true if the error from the GitHub client indicates
