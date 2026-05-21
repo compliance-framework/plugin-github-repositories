@@ -48,6 +48,8 @@ plugins:
 Dependency health collection currently parses direct `go.mod` dependencies only. It resolves module paths that start with `github.com/{owner}/{repo}` and collects public upstream repository health signals.
 Dependency policies are now evaluated using policy behavior metadata from the request (`dependency` behavior), and dependency inputs expose repository/dependency context under `input.dependency` and `input.repository` with request policy data available at `input.policy_data`. This can add several GitHub API calls per direct dependency, so enable it only for policy collections that need dependency evidence.
 
+Policy input migration: use request `policy_data` for new policy-specific inputs. The legacy plugin config key `policy_input` is still accepted as a JSON string fallback when request `policy_data` is not provided, and repository policy evaluation exposes the same data under both `input.policy_data` and the legacy `input.policy_input` key for compatibility. If both `policy_data` and `policy_input` are provided, `policy_data` is used.
+
 ## Integration testing
 
 This plugin contains unit tests as well as integration tests.

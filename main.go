@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -38,6 +39,7 @@ type PluginConfig struct {
 	DependencyHealthIncludeUnresolved       string `mapstructure:"dependency_health_include_unresolved"`
 	DependencyHealthCollectSBOM             string `mapstructure:"dependency_health_collect_sbom"`
 	DependencyHealthPRInteractionSampleSize string `mapstructure:"dependency_health_pr_interaction_sample_size"`
+	PolicyInput                             string `mapstructure:"policy_input"`
 
 	// Parsed values (set during Configure)
 	policyData                              map[string]interface{}
@@ -134,6 +136,18 @@ func (c *PluginConfig) parseDependencyHealthConfig() error {
 	return nil
 }
 
+func (c *PluginConfig) parseLegacyPolicyInput() (map[string]interface{}, error) {
+	if c.PolicyInput == "" {
+		return map[string]interface{}{}, nil
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(c.PolicyInput), &result); err != nil {
+		return nil, fmt.Errorf("invalid policy_input JSON: %w", err)
+	}
+	return result, nil
+}
+
 func parseBoolConfig(value string, defaultValue bool, name string) (bool, error) {
 	if value == "" {
 		return defaultValue, nil
@@ -186,6 +200,7 @@ type SaturatedRepository struct {
 	Environments         []*RepositoryEnvironment                `json:"environments"`
 	EffectiveBranchRules map[string]*BranchRuleEvidence          `json:"effective_branch_rules"`
 	PolicyData           map[string]interface{}                  `json:"policy_data"`
+	PolicyInput          map[string]interface{}                  `json:"policy_input,omitempty"`
 }
 
 type GithubReposPlugin struct {
@@ -221,6 +236,13 @@ func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.Confi
 	}
 	if req.GetPolicyData() != nil {
 		config.policyData = req.GetPolicyData().AsMap()
+	} else {
+		legacyPolicyInput, err := config.parseLegacyPolicyInput()
+		if err != nil {
+			l.Logger.Error("Error parsing legacy policy input", "error", err)
+			return nil, err
+		}
+		config.policyData = legacyPolicyInput
 	}
 	l.Logger.Debug(
 		"Policy data parsed",
@@ -461,6 +483,7 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 				Environments:          environments,
 				EffectiveBranchRules:  effectiveBranchRules,
 				PolicyData:            l.config.policyData,
+				PolicyInput:           l.config.policyData,
 			}
 
 			if len(repositoryPolicyPaths) > 0 {
@@ -1051,6 +1074,9 @@ func (l *GithubReposPlugin) EvaluatePolicies(ctx context.Context, data *Saturate
 	)
 
 	if len(dependencies) == 0 {
+		if data.PolicyInput == nil {
+			data.PolicyInput = data.PolicyData
+		}
 		for _, policyPath := range policyPaths {
 			l.Logger.Debug("Evaluating repository policy path", "repo", data.Settings.GetFullName(), "policy_path", policyPath)
 			l.Logger.Debug(

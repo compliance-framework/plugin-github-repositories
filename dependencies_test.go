@@ -17,6 +17,7 @@ import (
 	"github.com/compliance-framework/agent/runner/proto"
 	"github.com/google/go-github/v71/github"
 	"github.com/hashicorp/go-hclog"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 func TestParseGoModDirectDependencies(t *testing.T) {
@@ -105,6 +106,79 @@ func TestConfigureDefaultsPolicyData(t *testing.T) {
 	}
 	if len(plugin.config.policyData) != 0 {
 		t.Fatalf("expected empty policy data, got %#v", plugin.config.policyData)
+	}
+}
+
+func TestConfigureLegacyPolicyInputFallback(t *testing.T) {
+	plugin := &GithubReposPlugin{Logger: hclog.NewNullLogger()}
+	_, err := plugin.Configure(&proto.ConfigureRequest{
+		Config: map[string]string{
+			"token":        "test-token",
+			"organization": "test-org",
+			"policy_input": `{"workflow_names":["ci.yml"],"enabled":true}`,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Configure returned error: %v", err)
+	}
+	if got := plugin.config.policyData["enabled"]; got != true {
+		t.Fatalf("expected legacy policy_input to populate policy data, got %#v", got)
+	}
+	workflowNames, ok := plugin.config.policyData["workflow_names"].([]interface{})
+	if !ok || len(workflowNames) != 1 || workflowNames[0] != "ci.yml" {
+		t.Fatalf("unexpected workflow_names from legacy policy_input: %#v", plugin.config.policyData["workflow_names"])
+	}
+}
+
+func TestConfigurePolicyDataOverridesLegacyPolicyInput(t *testing.T) {
+	plugin := &GithubReposPlugin{Logger: hclog.NewNullLogger()}
+	policyData, err := structpb.NewStruct(map[string]interface{}{
+		"source": "request",
+	})
+	if err != nil {
+		t.Fatalf("NewStruct returned error: %v", err)
+	}
+	_, err = plugin.Configure(&proto.ConfigureRequest{
+		Config: map[string]string{
+			"token":        "test-token",
+			"organization": "test-org",
+			"policy_input": `{"source":"legacy"}`,
+		},
+		PolicyData: policyData,
+	})
+	if err != nil {
+		t.Fatalf("Configure returned error: %v", err)
+	}
+	if got := plugin.config.policyData["source"]; got != "request" {
+		t.Fatalf("expected request policy_data to win, got %#v", got)
+	}
+}
+
+func TestConfigureInvalidLegacyPolicyInputFails(t *testing.T) {
+	plugin := &GithubReposPlugin{Logger: hclog.NewNullLogger()}
+	_, err := plugin.Configure(&proto.ConfigureRequest{
+		Config: map[string]string{
+			"token":        "test-token",
+			"organization": "test-org",
+			"policy_input": `not-json`,
+		},
+	})
+	if err == nil {
+		t.Fatal("expected invalid legacy policy_input to fail")
+	}
+}
+
+func TestSaturatedRepositoryPolicyInputAlias(t *testing.T) {
+	repo := &SaturatedRepository{
+		PolicyData: map[string]interface{}{"source": "policy-data"},
+	}
+	plugin := &GithubReposPlugin{Logger: hclog.NewNullLogger()}
+	_, err := plugin.EvaluatePolicies(t.Context(), repo, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("EvaluatePolicies returned error: %v", err)
+	}
+	if repo.PolicyInput["source"] != "policy-data" {
+		t.Fatalf("expected policy_input alias to match policy_data, got %#v", repo.PolicyInput)
 	}
 }
 
