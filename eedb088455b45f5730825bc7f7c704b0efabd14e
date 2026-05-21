@@ -1,0 +1,29 @@
+lisa-addressed:
+---
+Comment (main.go:35):
+PluginConfig no longer supports the previous `policy_input` config (JSON string) and now only uses `ConfigureRequest.policy_data`. If existing deployments relied on `policy_input`, the value will be silently ignored, potentially changing policy outcomes. Consider keeping backward compatibility (e.g., still parse `policy_input` as a fallback), or fail fast when `policy_input` is provided, and document the migration path in README/release notes.
+
+This issue also appears on line 185 of the same file.
+---
+Comment (README.md:50):
+The README introduces `policy_data` for dependency policies, but it doesn’t mention that the previous `policy_input` configuration has been removed/ignored. To prevent silent behavior changes for existing users/custom policy bundles, add an explicit migration note explaining how to provide `policy_data` and what happens to `policy_input`.
+
+---
+Review by copilot-pull-request-reviewer:
+## Pull request overview
+
+Copilot reviewed 8 out of 10 changed files in this pull request and generated 2 comments.
+
+<details>
+<summary>Comments suppressed due to low confidence (1)</summary>
+
+**main.go:189**
+* Renaming `policy_input` to `policy_data` in the repository evaluation payload is a breaking change for any existing policies that read `input.policy_input`. Consider including a backward-compatible alias field (or populating both JSON keys) for at least one release cycle, or clearly documenting the breaking change and required policy updates.
+```
+	RepositoryTeams      []*RepositoryTeam                       `json:"repository_teams"`
+	Environments         []*RepositoryEnvironment                `json:"environments"`
+	EffectiveBranchRules map[string]*BranchRuleEvidence          `json:"effective_branch_rules"`
+	PolicyData           map[string]interface{}                  `json:"policy_data"`
+}
+```
+</details>
