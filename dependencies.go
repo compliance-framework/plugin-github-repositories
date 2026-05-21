@@ -15,6 +15,7 @@ const (
 	dependencyEcosystemGo = "go"
 	dependencySourceGoMod = "go.mod"
 	dependencyPRPageSize  = 100
+	dependencyPRMaxPages  = 10
 )
 
 type goModuleDependency struct {
@@ -498,6 +499,7 @@ func (l *GithubReposPlugin) collectDependencyPullRequests(ctx context.Context, d
 		dep.Health.PullRequests = stats
 		return
 	}
+	closedPRs = filterPullRequestsClosedSince(closedPRs, since)
 	stats.RecentClosedCount = len(closedPRs)
 	stats.MedianDaysToClose = medianDaysToClose(closedPRs)
 	dep.Health.PullRequests = stats
@@ -514,7 +516,7 @@ func (l *GithubReposPlugin) listPullRequestIssues(ctx context.Context, owner, re
 	}
 
 	prs := make([]*github.Issue, 0, dependencyPRPageSize)
-	for {
+	for pages := 0; pages < dependencyPRMaxPages; pages++ {
 		issues, resp, err := l.githubClient.Issues.ListByRepo(ctx, owner, repo, opts)
 		if err != nil {
 			return nil, err
@@ -531,6 +533,21 @@ func (l *GithubReposPlugin) listPullRequestIssues(ctx context.Context, owner, re
 		opts.Page = resp.NextPage
 	}
 	return prs, nil
+}
+
+func filterPullRequestsClosedSince(prs []*github.Issue, since time.Time) []*github.Issue {
+	if since.IsZero() {
+		return prs
+	}
+	filtered := make([]*github.Issue, 0, len(prs))
+	for _, pr := range prs {
+		closed := githubTimestampTime(pr.ClosedAt)
+		if closed == nil || closed.Before(since) {
+			continue
+		}
+		filtered = append(filtered, pr)
+	}
+	return filtered
 }
 
 func medianDaysToClose(prs []*github.Issue) *float64 {

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -534,6 +535,59 @@ func TestListPullRequestIssuesPaginatesAndFiltersPullRequests(t *testing.T) {
 	}
 	if prs[0].GetNumber() != 1 || prs[1].GetNumber() != 3 {
 		t.Fatalf("unexpected pull request issue numbers: %d, %d", prs[0].GetNumber(), prs[1].GetNumber())
+	}
+}
+
+func TestListPullRequestIssuesStopsAtMaxPages(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	requests := 0
+	mux.HandleFunc("/repos/good/lib/issues", func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests > dependencyPRMaxPages {
+			t.Fatalf("requested more than %d pages", dependencyPRMaxPages)
+		}
+		nextPage := requests + 1
+		w.Header().Set("Link", fmt.Sprintf(`<%s/repos/good/lib/issues?page=%d>; rel="next"`, server.URL, nextPage))
+		writeJSON(t, w, []map[string]any{{
+			"number":       requests,
+			"pull_request": map[string]any{"url": fmt.Sprintf("https://api.github.test/repos/good/lib/pulls/%d", requests)},
+		}})
+	})
+
+	plugin := newTestPlugin(t, server.URL)
+	prs, err := plugin.listPullRequestIssues(t.Context(), "good", "lib", "closed", time.Time{})
+	if err != nil {
+		t.Fatalf("listPullRequestIssues returned error: %v", err)
+	}
+	if requests != dependencyPRMaxPages {
+		t.Fatalf("expected %d requests, got %d", dependencyPRMaxPages, requests)
+	}
+	if len(prs) != dependencyPRMaxPages {
+		t.Fatalf("expected %d pull requests, got %d", dependencyPRMaxPages, len(prs))
+	}
+}
+
+func TestFilterPullRequestsClosedSinceUsesClosedAt(t *testing.T) {
+	since := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+	prs := []*github.Issue{
+		{
+			Number:   github.Ptr(1),
+			ClosedAt: githubTimestamp("2026-01-09T23:59:59Z"),
+		},
+		{
+			Number:   github.Ptr(2),
+			ClosedAt: githubTimestamp("2026-01-10T00:00:00Z"),
+		},
+		{
+			Number: github.Ptr(3),
+		},
+	}
+
+	filtered := filterPullRequestsClosedSince(prs, since)
+	if len(filtered) != 1 || filtered[0].GetNumber() != 2 {
+		t.Fatalf("expected only PR 2, got %#v", filtered)
 	}
 }
 

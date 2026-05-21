@@ -443,7 +443,7 @@ policies/gh_repo_dependency_health_unknown.rego
 policies/gh_repo_dependency_health_unknown_test.rego
 ```
 
-All six policies should evaluate `input.dependency`. The plugin routes policy bundles whose path contains `dependency` or `dependencies` through dependency-granular evaluation, producing one evidence result per dependency per policy.
+All six policies should evaluate `input.dependency`. The plugin routes policies with dependency policy behavior metadata through dependency-granular evaluation, producing one evidence result per dependency per policy. Requests default the `plugin-github-repositories-dependency-policies` source to dependency behavior; other dependency policy bundles should opt in by setting dependency behavior metadata.
 
 Each violation should include dependency-specific `remarks`. Evidence also carries dependency-specific labels so risk acceptance can distinguish one dependency from another.
 
