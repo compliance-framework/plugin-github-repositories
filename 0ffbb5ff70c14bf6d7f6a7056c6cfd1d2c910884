@@ -1,0 +1,8 @@
+lisa-addressed:
+---
+Comment (README.md:24):
+Minor grammar: this sentence lists APIs but says "pull request" singular. Consider changing to "pull requests" for consistency with the bullet above and the rest of the sentence.
+
+---
+Comment (main.go:1068):
+EvaluatePolicies assumes data.Settings is non-nil (e.g., data.Settings.GetFullName()) and will panic if called with a partially populated SaturatedRepository. This is currently exercised by TestSaturatedRepositoryPolicyInputAlias in this PR (repo.Settings is not set). Add an early guard that returns a clear error (or at least performs the PolicyInput aliasing) when data or data.Settings is nil.
