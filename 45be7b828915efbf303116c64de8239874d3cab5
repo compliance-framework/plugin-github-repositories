@@ -1,0 +1,8 @@
+lisa-addressed:
+---
+Comment (dependencies.go:497):
+`collectDependencySBOM` records any `DependencyGraph.GetSBOM` error as a collection failure. GitHub commonly returns 404 when an SBOM is simply not available; treating that as an error makes `sbom_collected` false and adds an error, which conflates “SBOM absent” with “SBOM unavailable due to permissions/API failure”. Consider handling 404 similarly to license/release: mark SBOM as collected with `available=false` (and no error), while keeping 403/401/etc as collection errors.
+
+---
+Comment (dependencies.go:83):
+`gatherRepositoryDependencies` dereferences `l.config` (and later uses `l.githubClient`) without checking they’re initialized. Since `GatherRepositoryDependencies` is exported, calling it before `Configure` would panic. Consider returning an error or early no-op when `l.config == nil` or `l.githubClient == nil` to make the helper safe for reuse/tests.
