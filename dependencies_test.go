@@ -182,6 +182,20 @@ func TestSaturatedRepositoryPolicyInputAlias(t *testing.T) {
 	}
 }
 
+func TestSaturatedRepositoryPolicyInputAliasMarshalsWhenEmpty(t *testing.T) {
+	repo := &SaturatedRepository{
+		PolicyData:  map[string]interface{}{},
+		PolicyInput: map[string]interface{}{},
+	}
+	payload, err := json.Marshal(repo)
+	if err != nil {
+		t.Fatalf("failed to marshal repository: %v", err)
+	}
+	if !strings.Contains(string(payload), `"policy_input":{}`) {
+		t.Fatalf("expected empty policy_input to be present, got %s", payload)
+	}
+}
+
 func TestMedianHelpers(t *testing.T) {
 	prs := []*github.Issue{
 		{

@@ -200,7 +200,7 @@ type SaturatedRepository struct {
 	Environments         []*RepositoryEnvironment                `json:"environments"`
 	EffectiveBranchRules map[string]*BranchRuleEvidence          `json:"effective_branch_rules"`
 	PolicyData           map[string]interface{}                  `json:"policy_data"`
-	PolicyInput          map[string]interface{}                  `json:"policy_input,omitempty"`
+	PolicyInput          map[string]interface{}                  `json:"policy_input"`
 }
 
 type GithubReposPlugin struct {
