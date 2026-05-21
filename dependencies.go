@@ -26,7 +26,7 @@ type goModuleDependency struct {
 
 func (l *GithubReposPlugin) GatherRepositoryDependencies(ctx context.Context, repo *github.Repository) []*RepositoryDependency {
 	dependencies, err := l.gatherRepositoryDependencies(ctx, repo, nil)
-	if err != nil {
+	if err != nil && l.Logger != nil {
 		l.Logger.Warn("dependency collection callback failed", "repo", repo.GetFullName(), "error", err)
 	}
 	return dependencies
@@ -35,6 +35,12 @@ func (l *GithubReposPlugin) GatherRepositoryDependencies(ctx context.Context, re
 func (l *GithubReposPlugin) gatherRepositoryDependencies(ctx context.Context, repo *github.Repository, onDependency func(*RepositoryDependency) error) ([]*RepositoryDependency, error) {
 	if repo == nil {
 		return nil, nil
+	}
+	if l.config == nil {
+		return nil, fmt.Errorf("github repositories plugin is not configured")
+	}
+	if l.githubClient == nil {
+		return nil, fmt.Errorf("github client is not configured")
 	}
 
 	l.Logger.Debug("Fetching go.mod for dependency collection", "repo", repo.GetFullName(), "ref", repo.GetDefaultBranch())
@@ -493,8 +499,13 @@ func (l *GithubReposPlugin) collectDependencyLicense(ctx context.Context, dep *R
 
 func (l *GithubReposPlugin) collectDependencySBOM(ctx context.Context, dep *RepositoryDependency) {
 	dep.SupplyChain.SBOM = &DependencySBOMSummary{}
-	sbom, _, err := l.githubClient.DependencyGraph.GetSBOM(ctx, dep.Repository.Owner, dep.Repository.Name)
+	sbom, resp, err := l.githubClient.DependencyGraph.GetSBOM(ctx, dep.Repository.Owner, dep.Repository.Name)
 	if err != nil {
+		if resp != nil && resp.Response != nil && resp.StatusCode == 404 {
+			dep.SupplyChain.SBOM.Collected = true
+			dep.CollectionStatus.SBOMCollected = true
+			return
+		}
 		l.recordDependencyCollectionError(dep, "sbom", err)
 		return
 	}

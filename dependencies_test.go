@@ -378,6 +378,61 @@ require (
 	}
 }
 
+func TestGatherRepositoryDependenciesRequiresConfiguration(t *testing.T) {
+	plugin := &GithubReposPlugin{}
+	repo := &github.Repository{
+		Name:          github.Ptr("target"),
+		DefaultBranch: github.Ptr("main"),
+		Owner:         &github.User{Login: github.Ptr("source")},
+	}
+
+	if deps := plugin.GatherRepositoryDependencies(t.Context(), repo); deps != nil {
+		t.Fatalf("expected no dependencies from unconfigured plugin, got %#v", deps)
+	}
+
+	if _, err := plugin.gatherRepositoryDependencies(t.Context(), repo, nil); err == nil {
+		t.Fatal("expected unconfigured plugin to return an error")
+	}
+}
+
+func TestCollectDependencySBOMTreatsNotFoundAsCollectedUnavailable(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/missing/lib/dependency-graph/sbom" {
+			t.Fatalf("unexpected GitHub API request: %s", r.URL.Path)
+		}
+		http.NotFound(w, r)
+	})
+
+	plugin := newTestPlugin(t, server.URL)
+	dep := newRepositoryDependency(goModuleDependency{
+		Name:    "github.com/missing/lib",
+		Version: "v1.0.0",
+		Direct:  true,
+	})
+	dep.Repository = &DependencyRepository{
+		Provider: "github",
+		Owner:    "missing",
+		Name:     "lib",
+		URL:      "https://github.com/missing/lib",
+		Resolved: true,
+	}
+
+	plugin.collectDependencySBOM(t.Context(), dep)
+
+	if dep.SupplyChain.SBOM == nil || !dep.SupplyChain.SBOM.Collected || dep.SupplyChain.SBOM.Available {
+		t.Fatalf("expected unavailable SBOM to be collected without availability, got %#v", dep.SupplyChain.SBOM)
+	}
+	if !dep.CollectionStatus.SBOMCollected {
+		t.Fatal("expected SBOM collection status to be marked collected")
+	}
+	if len(dep.CollectionStatus.Errors) != 0 {
+		t.Fatalf("expected no collection errors for missing SBOM, got %#v", dep.CollectionStatus.Errors)
+	}
+}
+
 func TestCollectDependencyRepositoryFactsMarksHealthIncompleteOnHealthError(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
