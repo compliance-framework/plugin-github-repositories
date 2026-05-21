@@ -27,7 +27,7 @@ type goModuleDependency struct {
 func (l *GithubReposPlugin) GatherRepositoryDependencies(ctx context.Context, repo *github.Repository) []*RepositoryDependency {
 	dependencies, err := l.gatherRepositoryDependencies(ctx, repo, nil)
 	if err != nil && l.Logger != nil {
-		l.Logger.Warn("dependency collection callback failed", "repo", repo.GetFullName(), "error", err)
+		l.Logger.Warn("dependency collection failed", "repo", repo.GetFullName(), "error", err)
 	}
 	return dependencies
 }
@@ -288,9 +288,6 @@ func (l *GithubReposPlugin) fetchGoMod(ctx context.Context, repo *github.Reposit
 		&github.RepositoryContentGetOptions{Ref: repo.GetDefaultBranch()},
 	)
 	if err != nil {
-		if isPermissionError(err) {
-			return "", err
-		}
 		return "", err
 	}
 	if file == nil {

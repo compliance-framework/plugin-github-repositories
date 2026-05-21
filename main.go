@@ -515,23 +515,18 @@ func (l *GithubReposPlugin) Eval(req *proto.EvalRequest, apiHelper runner.ApiHel
 			}
 
 			l.Logger.Debug("Collecting repository dependencies", "repo", repo.GetFullName())
-			dependencyEvidences := []*proto.Evidence{}
-			dependencies, err := l.gatherRepositoryDependencies(ctx, repo, func(dependency *RepositoryDependency) error {
-				evidences, err := l.EvaluatePolicies(ctx, data, []*RepositoryDependency{dependency}, dependencyPolicyPaths, l.config.policyData)
-				if err != nil {
-					return err
-				}
-				dependencyEvidences = append(dependencyEvidences, evidences...)
-				l.Logger.Debug(
-					"Evaluated dependency evidence",
-					"repo", repo.GetFullName(),
-					"dependency", dependency.Name,
-					"evidence_count", len(evidences),
-				)
+			dependencies, err := l.gatherRepositoryDependencies(ctx, repo, func(*RepositoryDependency) error {
 				return nil
 			})
 			if err != nil {
-				l.Logger.Error("Error evaluating or creating dependency evidence", "error", err)
+				l.Logger.Error("Error collecting repository dependencies", "error", err)
+				return &proto.EvalResponse{
+					Status: proto.ExecutionStatus_FAILURE,
+				}, err
+			}
+			dependencyEvidences, err := l.EvaluatePolicies(ctx, data, dependencies, dependencyPolicyPaths, l.config.policyData)
+			if err != nil {
+				l.Logger.Error("Error evaluating dependency policies", "error", err)
 				return &proto.EvalResponse{
 					Status: proto.ExecutionStatus_FAILURE,
 				}, err
