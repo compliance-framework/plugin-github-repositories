@@ -1,0 +1,12 @@
+lisa-addressed:
+---
+Comment (dependencies.go:30):
+The warning message here is misleading: `GatherRepositoryDependencies` calls `gatherRepositoryDependencies` with a nil callback, but logs "dependency collection callback failed" for any error (including configuration/client errors). Consider changing the message to reflect a general dependency collection failure (or include the actual failure stage) so operators aren’t pointed at the callback as the cause.
+
+---
+Comment (dependencies.go:293):
+This `isPermissionError` branch is currently redundant because both branches return the same `("") , err`. Either remove the conditional or implement distinct handling (e.g., returning a typed error or a sentinel) so the check has an effect.
+
+---
+Comment (main.go:532):
+Dependency policies are evaluated by calling `EvaluatePolicies` once per dependency inside the dependency-gather callback. Since `EvaluatePolicies` already supports evaluating a slice of dependencies, this approach repeats policy processor setup (and potentially policy bundle loading) for each dependency, which can significantly increase runtime for repos with many dependencies. Consider gathering dependencies first and then calling `EvaluatePolicies` once with the full dependency slice, or refactoring `EvaluatePolicies` to expose a cheaper per-dependency evaluation path that avoids redoing shared setup each time.
