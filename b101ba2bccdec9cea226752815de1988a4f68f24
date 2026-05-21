@@ -1,0 +1,4 @@
+lisa-addressed:
+---
+Comment (main.go:203):
+`policy_input` is marked `omitempty`, so when policy data is empty the legacy `input.policy_input` field will be omitted from the JSON sent to policy evaluation. That undermines the stated compatibility goal of always exposing the same data under both `input.policy_data` and `input.policy_input` (missing key vs empty object behave differently for some Rego patterns). Consider removing `omitempty` or otherwise ensuring `policy_input` is always present (at least as `{}`) during repository evaluation.
