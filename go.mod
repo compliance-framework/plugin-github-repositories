@@ -3,7 +3,7 @@ module github.com/compliance-framework/plugin-github-repositories
 go 1.26.1
 
 require (
-	github.com/compliance-framework/agent v0.7.0
+	github.com/compliance-framework/agent v0.7.1
 	github.com/google/go-github/v71 v71.0.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.7.0
@@ -11,6 +11,7 @@ require (
 	github.com/shurcooL/githubv4 v0.0.0-20240727222349-48295856cce7
 	golang.org/x/mod v0.34.0
 	golang.org/x/oauth2 v0.35.0
+	google.golang.org/protobuf v1.36.11
 )
 
 require (
@@ -63,6 +64,5 @@ require (
 	golang.org/x/text v0.35.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260226221140-a57be14db171 // indirect
 	google.golang.org/grpc v1.79.3 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
