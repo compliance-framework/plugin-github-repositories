@@ -6,3 +6,6 @@ lisa-design:
 
 lisa-design:
 - release-please.yml keeps a concurrency group without cancel-in-progress, and release.yml/cut-prerelease.yml have none (cut-prerelease's shared job has its own): a release run must never be cancelled half way. Copied as-is from the mock callers.
+
+lisa-selfreview:
+- pass 1 (core, go, go-plugin rules): approve, no findings. actionlint v1.7.12 clean, go build/test pass, goreleaser check + snapshot pass, release-please-config.json has no drift from workflows release-please/defaults.json at v1.5.2.
