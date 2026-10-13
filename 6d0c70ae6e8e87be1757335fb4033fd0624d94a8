@@ -1,0 +1,4 @@
+lisa-design:
+- No code change needed: the plugin already stores req.GetPolicyData().AsMap() in Configure (falling back to legacy policy_input) and passes it to both NewPolicyProcessor calls, so the v0.7.0 policyData parameter was already satisfied at v0.8.0-rc4.
+- go directive was already 1.26.1, so go get did not raise it.
+- Trunk of this repo is master (not main); the PR targets master and lint ran with --new-from-merge-base=origin/master.
