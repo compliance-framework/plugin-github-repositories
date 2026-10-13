@@ -1,0 +1,4 @@
+lisa-design:
+- ci.yml is mock-plugin-1's caller verbatim except: the mock-only "Trial of the shared plugin CI" header comment is dropped, and the push trigger is branches: [master] instead of [main], because this repo's default branch is master (a [main] trigger would never fire on merges).
+- push.yml and test.yml deleted; only push.yml called test.yml. release.yml and build-and-upload.yml are untouched (W3 replaces them).
+- .goreleaser.yaml: archives.format -> formats: [tar.gz] (goreleaser deprecation). Verified with snapshot releases of the old and new config that the five archives have the same names and contents.
