@@ -3,3 +3,6 @@ lisa-design:
 - Manifest seeded at 0.9.0 = releases/latest (v0.9.0, final, ancestor of master), so release-please only walks v0.9.0..HEAD; no bootstrap-sha.
 - .goreleaser.yaml: added release.prerelease: auto (required by release-go-plugin.yml) and replace_existing_artifacts: true (as mock-plugin-1; the shared job warns without it). builds/archives unchanged, so archive names and contents are unchanged.
 - README Releases section left as is: it names GoReleaser/gooci and where artifacts live, not tag pushes or the old workflows.
+
+lisa-design:
+- release-please.yml keeps a concurrency group without cancel-in-progress, and release.yml/cut-prerelease.yml have none (cut-prerelease's shared job has its own): a release run must never be cancelled half way. Copied as-is from the mock callers.
