@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.1](https://github.com/compliance-framework/plugin-github-repositories/compare/v0.10.0...v0.10.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* **deps:** bump agent to v0.9.3, workflows to v1.7.0 ([#39](https://github.com/compliance-framework/plugin-github-repositories/issues/39)) ([b53f42f](https://github.com/compliance-framework/plugin-github-repositories/commit/b53f42f55711862be4a336eb0f32a432e338c0ea))
+* **deps:** update all non-major dependencies ([#37](https://github.com/compliance-framework/plugin-github-repositories/issues/37)) ([b3768fa](https://github.com/compliance-framework/plugin-github-repositories/commit/b3768fa81c4dacbb49e2c91c3a9a7a261fcf2e00))
+
 ## [0.10.0](https://github.com/compliance-framework/plugin-github-repositories/compare/v0.9.0...v0.10.0) (2026-10-14)
 
 
