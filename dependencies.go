@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/go-github/v71/github"
+	"github.com/google/go-github/v93/github"
 	"golang.org/x/mod/modfile"
 )
 
@@ -590,7 +590,7 @@ func (l *GithubReposPlugin) listPullRequestIssues(ctx context.Context, owner, re
 		if resp == nil || resp.NextPage == 0 {
 			return prs, false, nil
 		}
-		opts.Page = resp.NextPage
+		opts.ListOptions.Page = resp.NextPage
 	}
 	return prs, true, nil
 }

@@ -13,7 +13,7 @@ import (
 	policyManager "github.com/compliance-framework/agent/policy-manager"
 	"github.com/compliance-framework/agent/runner"
 	"github.com/compliance-framework/agent/runner/proto"
-	"github.com/google/go-github/v71/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/hashicorp/go-hclog"
 	goplugin "github.com/hashicorp/go-plugin"
 	"github.com/mitchellh/mapstructure"
@@ -270,7 +270,11 @@ func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.Confi
 	httpClient := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(&oauth2.Token{
 		AccessToken: config.Token,
 	}))
-	l.githubClient = github.NewClient(httpClient)
+	githubClient, err := github.NewClient(github.WithHTTPClient(httpClient))
+	if err != nil {
+		return nil, fmt.Errorf("creating github client: %w", err)
+	}
+	l.githubClient = githubClient
 	l.graphqlClient = githubv4.NewClient(httpClient)
 
 	return &proto.ConfigureResponse{}, nil
@@ -881,7 +885,7 @@ func (l *GithubReposPlugin) GetBranchProtectionAndRequiredStatusCheck(ctx contex
 	}
 
 	// 2) Rules that apply to this branch (rulesets API): returns only effective rules.
-	rules, _, err := l.githubClient.Repositories.GetRulesForBranch(ctx, owner, name, branch)
+	rules, _, err := l.githubClient.Repositories.ListRulesForBranch(ctx, owner, name, branch, nil)
 	if err != nil {
 		// If rules API fails, still return what we have from protection.
 		l.Logger.Trace("GetRulesForBranch failed", "repo", repo.GetFullName(), "branch", branch, "error", err)

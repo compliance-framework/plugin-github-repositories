@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,7 +14,7 @@ import (
 	"time"
 
 	"github.com/compliance-framework/agent/runner/proto"
-	"github.com/google/go-github/v71/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/hashicorp/go-hclog"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -49,7 +48,7 @@ require (
 
 // TestResolveGitHubModulePath verifies GitHub module paths resolve to owner and repository names.
 func TestResolveGitHubModulePath(t *testing.T) {
-	owner, repo, ok := resolveGitHubModulePath("github.com/google/go-github/v71")
+	owner, repo, ok := resolveGitHubModulePath("github.com/google/go-github/v93")
 	if !ok {
 		t.Fatal("expected GitHub module path to resolve")
 	}
@@ -1030,12 +1029,11 @@ func assertStringSlicesEqual(t *testing.T, got []string, want []string) {
 
 func newTestPlugin(t *testing.T, serverURL string) *GithubReposPlugin {
 	t.Helper()
-	client := github.NewClient(http.DefaultClient)
-	baseURL, err := url.Parse(serverURL + "/")
+	baseURL := serverURL + "/"
+	client, err := github.NewClient(github.WithHTTPClient(http.DefaultClient), github.WithURLs(&baseURL, nil))
 	if err != nil {
-		t.Fatalf("failed to parse test server URL: %v", err)
+		t.Fatalf("failed to create GitHub client: %v", err)
 	}
-	client.BaseURL = baseURL
 	return &GithubReposPlugin{
 		Logger:       hclog.NewNullLogger(),
 		githubClient: client,
