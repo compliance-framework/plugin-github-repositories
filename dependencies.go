@@ -590,7 +590,7 @@ func (l *GithubReposPlugin) listPullRequestIssues(ctx context.Context, owner, re
 		if resp == nil || resp.NextPage == 0 {
 			return prs, false, nil
 		}
-		opts.Page = resp.NextPage
+		opts.ListOptions.Page = resp.NextPage
 	}
 	return prs, true, nil
 }

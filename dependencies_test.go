@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1030,12 +1029,11 @@ func assertStringSlicesEqual(t *testing.T, got []string, want []string) {
 
 func newTestPlugin(t *testing.T, serverURL string) *GithubReposPlugin {
 	t.Helper()
-	client := github.NewClient(http.DefaultClient)
-	baseURL, err := url.Parse(serverURL + "/")
+	baseURL := serverURL + "/"
+	client, err := github.NewClient(github.WithHTTPClient(http.DefaultClient), github.WithURLs(&baseURL, nil))
 	if err != nil {
-		t.Fatalf("failed to parse test server URL: %v", err)
+		t.Fatalf("failed to create GitHub client: %v", err)
 	}
-	client.BaseURL = baseURL
 	return &GithubReposPlugin{
 		Logger:       hclog.NewNullLogger(),
 		githubClient: client,

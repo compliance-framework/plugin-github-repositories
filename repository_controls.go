@@ -36,7 +36,7 @@ func (l *GithubReposPlugin) GatherRepositoryCollaborators(ctx context.Context, r
 			collaborators = append(collaborators, &RepositoryCollaborator{
 				Login:       user.GetLogin(),
 				RoleName:    user.GetRoleName(),
-				Permissions: copyPermissions(user.GetPermissions()),
+				Permissions: permissionsFromStruct(user.GetPermissions()),
 			})
 		}
 
@@ -140,7 +140,7 @@ func (l *GithubReposPlugin) GatherEffectiveBranchRules(ctx context.Context, repo
 
 	evidence := make(map[string]*BranchRuleEvidence, len(targets))
 	for branch := range targets {
-		rules, _, err := l.githubClient.Repositories.GetRulesForBranch(ctx, owner, name, branch)
+		rules, _, err := l.githubClient.Repositories.ListRulesForBranch(ctx, owner, name, branch, nil)
 		if err != nil {
 			if isHTTPStatusError(err, 404) {
 				l.Logger.Debug("Effective branch rules fetch skipped for missing branch", "repo", repo.GetFullName(), "branch", branch, "error", err)
@@ -359,6 +359,28 @@ func membersForOrgTeam(orgTeamMembers map[string][]string, slug string) []string
 		return append([]string{}, members...)
 	}
 	return nil
+}
+
+func permissionsFromStruct(in *github.RepositoryPermissions) map[string]bool {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]bool, 5)
+	for key, value := range map[string]*bool{
+		"admin":    in.Admin,
+		"maintain": in.Maintain,
+		"push":     in.Push,
+		"triage":   in.Triage,
+		"pull":     in.Pull,
+	} {
+		if value != nil {
+			out[key] = *value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func copyPermissions(in map[string]bool) map[string]bool {
