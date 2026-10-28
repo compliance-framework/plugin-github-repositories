@@ -18,7 +18,6 @@ import (
 	goplugin "github.com/hashicorp/go-plugin"
 	"github.com/mitchellh/mapstructure"
 	"github.com/shurcooL/githubv4"
-	"golang.org/x/oauth2"
 )
 
 // Validator is implemented by configuration values that can validate themselves.
@@ -28,7 +27,7 @@ type Validator interface {
 
 // PluginConfig contains user-provided and parsed runtime configuration for the plugin.
 type PluginConfig struct {
-	Token                                   string `mapstructure:"token"`
+	AuthConfig                              `mapstructure:",squash"`
 	Organization                            string `mapstructure:"organization"`
 	IncludedRepositories                    string `mapstructure:"included_repositories"`
 	ExcludedRepositories                    string `mapstructure:"excluded_repositories"`
@@ -58,8 +57,8 @@ type PluginConfig struct {
 
 // Validate checks required configuration fields and mutually exclusive repository filters.
 func (c *PluginConfig) Validate() error {
-	if c.Token == "" {
-		return fmt.Errorf("token is required")
+	if err := c.validateAuth(); err != nil {
+		return err
 	}
 	if c.Organization == "" {
 		return fmt.Errorf("organization is required")
@@ -267,9 +266,10 @@ func (l *GithubReposPlugin) Configure(req *proto.ConfigureRequest) (*proto.Confi
 	)
 
 	l.config = config
-	httpClient := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(&oauth2.Token{
-		AccessToken: config.Token,
-	}))
+	httpClient, err := config.httpClient(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("creating github http client: %w", err)
+	}
 	githubClient, err := github.NewClient(github.WithHTTPClient(httpClient))
 	if err != nil {
 		return nil, fmt.Errorf("creating github client: %w", err)

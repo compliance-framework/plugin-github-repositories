@@ -11,7 +11,9 @@ This plugin is intended to be run as part of an aggregate agent, and will execut
 
 ## Authentication
 
-To authenticate this plugin, you must provide a token which has at minimum the following permissions:
+The plugin authenticates with a token (a fine-grained personal access token, for example) or as a
+[GitHub App](#github-app-authentication) installation. Either needs at minimum the following
+read-only permissions:
 
 - Actions (read-only) - Used to pull workflow jobs and success
 - Administration (read-only) - Used to check configuration and rulesets for a repository
@@ -29,6 +31,10 @@ When dependency health collection is enabled, the token also uses repository con
 plugins:
   github_repos:
     token: "gh-pat-abc123"
+    # Or authenticate as a GitHub App instead of setting token (see below):
+    # app_id: "123456"
+    # installation_id: "78901234"
+    # private_key_file: /etc/ccf/github-app.pem
     # Organization which you want to check the repos of
     organization: octocat
     # The following items are mutually exclusive, so cannot be set together. If neither are set, all repos are
@@ -49,6 +55,33 @@ Dependency health collection currently parses direct `go.mod` dependencies only.
 Dependency policies are now evaluated using policy behavior metadata from the request (`dependency` behavior), and dependency inputs expose repository/dependency context under `input.dependency` and `input.repository` with request policy data available at `input.policy_data`. This can add several GitHub API calls per direct dependency, so enable it only for policy collections that need dependency evidence.
 
 Policy input migration: use request `policy_data` for new policy-specific inputs. The legacy plugin config key `policy_input` is still accepted as a JSON string fallback when request `policy_data` is not provided, and repository policy evaluation exposes the same data under both `input.policy_data` and the legacy `input.policy_input` key for compatibility. If both `policy_data` and `policy_input` are provided, `policy_data` is used.
+
+
+### GitHub App authentication
+
+Instead of a token, the plugin can authenticate as a GitHub App installed on the organization.
+Organizations can govern apps centrally, and the plugin only ever holds short-lived
+installation tokens, which it renews as they expire.
+
+1. Create a GitHub App (organization *Settings → Developer settings → GitHub Apps*) with the
+   read-only repository permissions listed above, and generate a private key for it.
+2. Install the app on the organization, for all repositories or the ones the plugin checks.
+3. Configure the plugin with the app's ID, the installation's ID (the number at the end of the
+   installation's settings URL) and the private key:
+
+```yaml
+plugins:
+  github_repos:
+    app_id: "123456"
+    installation_id: "78901234"
+    # The PEM file the app's "Generate a private key" downloads (preferred), or
+    private_key_file: /etc/ccf/github-app.pem
+    # the key inline, as PEM or base64-encoded PEM (e.g. from an environment variable)
+    # private_key: "LS0tLS1CRUdJTi..."
+    organization: octocat
+```
+
+A `token`, when set, takes precedence over the app settings.
 
 ## Integration testing
 
