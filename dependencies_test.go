@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/compliance-framework/agent/runner/proto"
-	"github.com/google/go-github/v71/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/hashicorp/go-hclog"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -49,7 +49,7 @@ require (
 
 // TestResolveGitHubModulePath verifies GitHub module paths resolve to owner and repository names.
 func TestResolveGitHubModulePath(t *testing.T) {
-	owner, repo, ok := resolveGitHubModulePath("github.com/google/go-github/v71")
+	owner, repo, ok := resolveGitHubModulePath("github.com/google/go-github/v93")
 	if !ok {
 		t.Fatal("expected GitHub module path to resolve")
 	}

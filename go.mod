@@ -4,7 +4,6 @@ go 1.26.1
 
 require (
 	github.com/compliance-framework/agent v0.9.3
-	github.com/google/go-github/v71 v71.0.0
 	github.com/google/go-github/v93 v93.0.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
