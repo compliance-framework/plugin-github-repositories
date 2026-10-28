@@ -3,6 +3,7 @@ module github.com/compliance-framework/plugin-github-repositories
 go 1.26.1
 
 require (
+	github.com/bradleyfalzon/ghinstallation/v2 v2.19.0
 	github.com/compliance-framework/agent v0.9.4
 	github.com/google/go-github/v93 v93.0.0
 	github.com/hashicorp/go-hclog v1.6.3
@@ -24,8 +25,10 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/gobwas/glob v1.0.0 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
+	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/go-containerregistry v0.22.1 // indirect
+	github.com/google/go-github/v88 v88.0.0 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/yamux v0.1.2 // indirect
