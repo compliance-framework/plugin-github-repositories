@@ -2,7 +2,7 @@ module github.com/compliance-framework/plugin-github-repositories
 
 go 1.26.1
 
-toolchain go1.26.10
+toolchain go1.27.3
 
 require (
 	github.com/bradleyfalzon/ghinstallation/v2 v2.19.0
