@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.12.0](https://github.com/compliance-framework/plugin-github-repositories/compare/v0.11.0...v0.12.0) (2026-10-30)
+
+
+### Features
+
+* GitHub App authentication ([#43](https://github.com/compliance-framework/plugin-github-repositories/issues/43)) ([65774a2](https://github.com/compliance-framework/plugin-github-repositories/commit/65774a2cb6fe069f3652e978904c976670fae349))
+
+
+### Bug Fixes
+
+* **deps:** build with the go1.26.10 toolchain so Renovate can ship Go security fixes ([#45](https://github.com/compliance-framework/plugin-github-repositories/issues/45)) ([2d7eded](https://github.com/compliance-framework/plugin-github-repositories/commit/2d7eded4c7c49b2dea8aeeec7f8097975258e722))
+
 ## [0.11.0](https://github.com/compliance-framework/plugin-github-repositories/compare/v0.10.0...v0.11.0) (2026-10-28)
 
 
