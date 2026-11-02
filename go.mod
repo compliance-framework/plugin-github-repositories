@@ -6,7 +6,7 @@ toolchain go1.27.3
 
 require (
 	github.com/bradleyfalzon/ghinstallation/v2 v2.19.0
-	github.com/compliance-framework/agent v0.9.4
+	github.com/compliance-framework/agent v0.9.6
 	github.com/google/go-github/v93 v93.0.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
@@ -20,7 +20,7 @@ require (
 require (
 	github.com/agnivade/levenshtein v1.2.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/compliance-framework/api v0.22.0 // indirect
+	github.com/compliance-framework/api v0.22.2 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
 	github.com/defenseunicorns/go-oscal v0.7.2 // indirect
 	github.com/fatih/color v1.18.0 // indirect
