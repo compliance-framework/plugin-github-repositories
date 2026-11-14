@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.12.1](https://github.com/compliance-framework/plugin-github-repositories/compare/v0.12.0...v0.12.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **deps:** update go toolchain directive to v1.27.4 [security] ([#49](https://github.com/compliance-framework/plugin-github-repositories/issues/49)) ([9feb39f](https://github.com/compliance-framework/plugin-github-repositories/commit/9feb39f4665dfb53b889025fb8ac39d73456ea59))
+* **deps:** update module golang.org/x/crypto to v0.59.0 [security] ([#51](https://github.com/compliance-framework/plugin-github-repositories/issues/51)) ([5309da6](https://github.com/compliance-framework/plugin-github-repositories/commit/5309da6a5b53ba0b352e0e48d9a64857fb51a987))
+* **deps:** update module golang.org/x/oauth2 to v0.38.0 ([#52](https://github.com/compliance-framework/plugin-github-repositories/issues/52)) ([7a6cf08](https://github.com/compliance-framework/plugin-github-repositories/commit/7a6cf081effde20357fdf243ad5ef3212376fd7a))
+
 ## [0.12.0](https://github.com/compliance-framework/plugin-github-repositories/compare/v0.11.0...v0.12.0) (2026-11-02)
 
 
